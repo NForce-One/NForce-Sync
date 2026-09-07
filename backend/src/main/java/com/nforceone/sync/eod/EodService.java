@@ -11,6 +11,7 @@ import com.nforceone.sync.businessrules.ShiftDefinitionRepository;
 import com.nforceone.sync.businessrules.ShiftSchedule;
 import com.nforceone.sync.eod.dto.TimeAdjustmentContextDto;
 import com.nforceone.sync.eod.dto.BlockedTaskDto;
+import com.nforceone.sync.eod.dto.EodDayDefaultsDto;
 import com.nforceone.sync.eod.dto.EodEntryDto;
 import com.nforceone.sync.eod.dto.SaveEodRequest;
 import com.nforceone.sync.eod.dto.SaveEodTaskRequest;
@@ -598,6 +599,28 @@ public class EodService {
                 config != null ? config.getMonthlyAdjustmentMinutes() : FALLBACK_ADJUSTMENT_ALLOWANCE,
                 minutesUsedThisMonth(employee.getId(), month, editedEntryId)
         );
+    }
+
+    /** Plain "working day in the office" default, used whenever nothing overrides it. */
+    private static final String DEFAULT_WORK_LOCATION = "Office";
+
+    /**
+     * Day Type / Work Location defaults for the caller on a given date, for the Submit EOD form
+     * to auto-populate when there is no saved entry for that date yet. Holiday calendar is the
+     * only existing source of truth that can override the plain "working day in the office"
+     * default — there is no Leave-records table (leave is self-reported on the entry, not a
+     * pre-existing record to look up) and no per-date/location shift assignment to consult.
+     */
+    @Transactional(readOnly = true)
+    public EodDayDefaultsDto getDayDefaults(LocalDate date, String actingEmail) {
+        requireUserByEmail(actingEmail); // enforces authentication, mirrors other endpoints here
+        LocalDate target = date != null ? date : LocalDate.now();
+
+        boolean isHoliday = holidayRepository.existsByHolidayDate(target);
+        if (isHoliday) {
+            return new EodDayDefaultsDto(EodEntry.DayType.HOLIDAY.name(), null);
+        }
+        return new EodDayDefaultsDto(EodEntry.DayType.WORKING_DAY.name(), DEFAULT_WORK_LOCATION);
     }
 
     private EodTask buildTask(SaveEodTaskRequest req, EodEntry entry) {

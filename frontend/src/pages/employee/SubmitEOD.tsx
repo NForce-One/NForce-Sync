@@ -7,7 +7,7 @@ import { useAuth } from '../../lib/auth';
 import { todayISO, formatDate, formatTime12h } from '../../lib/date';
 import { listProjects } from '../../api/projects';
 import { listTaskCategories } from '../../api/taskCategories';
-import { saveDraft, submitEntry, listEntries, getTimeAdjustmentContext } from '../../api/eod';
+import { saveDraft, submitEntry, listEntries, getTimeAdjustmentContext, getDayDefaults } from '../../api/eod';
 import { DatePicker } from '../../components/DatePicker';
 import type { EodEntryDto, EodTaskDto } from '../../api/eod';
 
@@ -321,6 +321,15 @@ export default function SubmitEOD() {
     queryFn:  () => listEntries(undefined, selectedDate, selectedDate),
   });
 
+  // Day Type / Work Location auto-population source for the selected date — holiday calendar
+  // today, extensible to leave/shift sources later without touching the populate effect below.
+  // Only ever consulted when there's no saved entry for the date (see the effect); a saved
+  // entry's own values always win.
+  const { data: dayDefaults, isLoading: loadingDayDefaults } = useQuery({
+    queryKey: ['eod', 'day-defaults', selectedDate],
+    queryFn:  () => getDayDefaults(selectedDate),
+  });
+
   // Shift timings + real monthly allowance usage. Keyed by date so the month's counts follow
   // the entry date rather than today.
   const { data: adjContext } = useQuery({
@@ -339,7 +348,9 @@ export default function SubmitEOD() {
   // ── Populate form when entry loads for the selected date ──────────────────
 
   useEffect(() => {
-    if (loadingEntry) return;
+    // Also wait on dayDefaults so a fresh date doesn't flash WORKING_DAY/Office before the
+    // holiday check resolves and immediately flips it to HOLIDAY.
+    if (loadingEntry || loadingDayDefaults) return;
 
     const entry: EodEntryDto | undefined = entries[0];
     const signature = entrySignature(selectedDate, entry);
@@ -365,18 +376,21 @@ export default function SubmitEOD() {
     } else {
       setEntryId(null);
       setEntryStatus(null);
-      setDayType('WORKING_DAY');
+      // No saved entry for this date yet — auto-populate from the resolved source of truth
+      // (holiday calendar today) rather than hardcoding, falling back to Working day/Office
+      // when nothing overrides it for this date.
+      setDayType(dayDefaults?.dayType ?? 'WORKING_DAY');
       setAdjEnabled(false);
       setAdjType(null);
       setAdjMinutes('');
-      setWorkLocation('');
+      setWorkLocation(dayDefaults?.workLocation ?? '');
       setNextDayPlan('');
       setRemarks('');
       setReviewerComment(null);
       setTasks([newRow()]);
     }
     setErrors([]);
-  }, [entries, loadingEntry, selectedDate, categories]);
+  }, [entries, loadingEntry, selectedDate, categories, dayDefaults, loadingDayDefaults]);
 
   // Clear the applied signature when the date changes so the next query result repopulates
   function handleDateChange(d: string) {
@@ -411,6 +425,10 @@ export default function SubmitEOD() {
   const isDateLocked = entryStatus === 'REJECTED';
   const totalHours   = tasks.reduce((sum, t) => sum + (parseFloat(t.hours) || 0), 0);
   const catMap       = new Map(categories.map(c => [c.id, c]));
+
+  // Gates the entry spinner/form-body split below — also waits on dayDefaults so the form
+  // doesn't render with stale field values for the beat before auto-population runs.
+  const formLoading = loadingEntry || loadingDayDefaults;
 
   const isHoliday  = dayType === 'HOLIDAY';
   const isLeaveDay = dayType === 'LEAVE';
@@ -762,7 +780,7 @@ export default function SubmitEOD() {
       )}
 
       {/* Loading entry spinner */}
-      {loadingEntry && (
+      {formLoading && (
         <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[100, 75].map((w, i) => (
             <div key={i} className="skeleton" style={{ height: 40, width: `${w}%`, borderRadius: 6 }} />
@@ -771,7 +789,7 @@ export default function SubmitEOD() {
       )}
 
       {/* Form body */}
-      {!loadingEntry && (
+      {!formLoading && (
         <>
           {/* Meta row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginTop: 24 }}>

@@ -1,6 +1,7 @@
 package com.nforceone.sync.eod;
 
 import com.nforceone.sync.eod.dto.BlockedTaskDto;
+import com.nforceone.sync.eod.dto.EodDayDefaultsDto;
 import com.nforceone.sync.eod.dto.EodEntryDto;
 import com.nforceone.sync.eod.dto.SaveEodRequest;
 import com.nforceone.sync.eod.dto.TimeAdjustmentContextDto;
@@ -64,6 +65,17 @@ public class EodController {
     public TimeAdjustmentContextDto getTimeAdjustmentContext(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return eodService.getTimeAdjustmentContext(date, actingEmail());
+    }
+
+    /**
+     * Day Type / Work Location defaults for the caller on a given date, so the Submit EOD form
+     * can auto-populate those fields when the employee picks an Entry Date with no saved entry
+     * yet. Scoped to the caller — no employeeId param, mirroring time-adjustment-context.
+     */
+    @GetMapping("/day-defaults")
+    public EodDayDefaultsDto getDayDefaults(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return eodService.getDayDefaults(date, actingEmail());
     }
 
     private String actingEmail() {

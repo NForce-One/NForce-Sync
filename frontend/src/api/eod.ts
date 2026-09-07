@@ -128,3 +128,14 @@ export async function getEntry(id: number): Promise<EodEntryDto> {
   const res = await api.get<EodEntryDto>(`/eod/${id}`);
   return res.data;
 }
+
+/** Day Type / Work Location defaults for a date with no saved entry yet — see SubmitEOD. */
+export interface EodDayDefaultsDto {
+  dayType: string;
+  workLocation: string | null;
+}
+
+export async function getDayDefaults(date: string): Promise<EodDayDefaultsDto> {
+  const res = await api.get<EodDayDefaultsDto>('/eod/day-defaults', { params: { date } });
+  return res.data;
+}
