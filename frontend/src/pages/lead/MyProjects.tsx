@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
 import { DropdownMenu } from '../../components/DropdownMenu';
+import { ReporteeScopePicker } from '../../components/ReporteeScopePicker';
+import { useAuth } from '../../lib/auth';
 import { useToast } from '../../lib/toast';
 import { extractApiError } from '../../api/admin';
 import {
@@ -286,7 +288,7 @@ function DeleteCategoryModal({ category, onClose }: {
 
 // ── Category panel ─────────────────────────────────────────────────────────────
 
-function CategoryPanel() {
+function CategoryPanel({ readOnly = false }: { readOnly?: boolean }) {
   // Categories are generic master data owned by the Team Lead — always fetched, never gated
   // on whether any project is assigned.
   const { data, isPending, isError, refetch } = useMyCategories();
@@ -315,16 +317,18 @@ function CategoryPanel() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--txt)' }}>Existing Categories</span>
-        <button
-          onClick={() => setModalOpen(true)}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '7px 14px', background: 'var(--brand)', border: 'none',
-            borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          <Plus size={14} aria-hidden="true" /> New Category
-        </button>
+        {!readOnly && (
+          <button
+            onClick={() => setModalOpen(true)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', background: 'var(--brand)', border: 'none',
+              borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            <Plus size={14} aria-hidden="true" /> New Category
+          </button>
+        )}
       </div>
 
       {!isPending && !isError && (data ?? []).length > 0 && (
@@ -404,17 +408,19 @@ function CategoryPanel() {
                   <td style={{ ...tdStyle, color: 'var(--txt-mut)' }}>{c.description ?? '-'}</td>
                   <td style={tdStyle}><StatusBadge status={c.status} /></td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <DropdownMenu
-                        ariaLabel={`Actions for ${c.name}`}
-                        open={openMenuId === c.id}
-                        onOpenChange={o => setOpenMenuId(o ? c.id : null)}
-                        items={[
-                          { key: 'edit', label: 'Edit', icon: Pencil, onSelect: () => setEditTarget(c) },
-                          { key: 'delete', label: 'Delete', icon: Trash2, color: '#E4373D', onSelect: () => setDeleteTarget(c) },
-                        ]}
-                      />
-                    </div>
+                    {!readOnly && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <DropdownMenu
+                          ariaLabel={`Actions for ${c.name}`}
+                          open={openMenuId === c.id}
+                          onOpenChange={o => setOpenMenuId(o ? c.id : null)}
+                          items={[
+                            { key: 'edit', label: 'Edit', icon: Pencil, onSelect: () => setEditTarget(c) },
+                            { key: 'delete', label: 'Delete', icon: Trash2, color: '#E4373D', onSelect: () => setDeleteTarget(c) },
+                          ]}
+                        />
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))
@@ -556,7 +562,10 @@ function SectionTabBar({ active, onChange }: { active: SectionTab; onChange: (ta
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function MyProjects() {
-  const { data: projects, isPending, isError, isFetching, refetch } = useMyLeadProjects();
+  const { user } = useAuth();
+  const isSuperAdmin = user!.role === 'superadmin';
+  const [teamLeadId, setTeamLeadId] = useState<number | null>(null);
+  const { data: projects, isPending, isError, isFetching, refetch } = useMyLeadProjects(undefined, teamLeadId);
   const { showToast } = useToast();
   const [selectedProjectId, setSelectedProjectId] = useState<number | undefined>(undefined);
   const [activeSection, setActiveSection] = useState<SectionTab>('projects');
@@ -589,6 +598,9 @@ export default function MyProjects() {
 
   return (
     <div>
+      {isSuperAdmin && (
+        <ReporteeScopePicker role="MANAGER" label="Team Lead" value={teamLeadId} onChange={setTeamLeadId} />
+      )}
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: '"Space Grotesk", sans-serif', fontSize: 22, fontWeight: 700, color: 'var(--txt)', margin: '0 0 4px', letterSpacing: '-0.01em' }}>
           {activeSection === 'projects' ? 'My Projects' : 'Category Management'}
@@ -617,7 +629,7 @@ export default function MyProjects() {
         />
       )}
 
-      {activeSection === 'categories' && <CategoryPanel />}
+      {activeSection === 'categories' && <CategoryPanel readOnly={isSuperAdmin} />}
 
       <ProjectDetailsModal
         projectId={detailsProjectId}

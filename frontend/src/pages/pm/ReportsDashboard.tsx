@@ -2,10 +2,10 @@ import { useState } from 'react';
 import EodByEmployeeReport from './EodByEmployeeReport';
 import MissingEodReport from './MissingEodReport';
 
-type Tab = 'eod' | 'missing';
+export type Tab = 'eod' | 'missing';
 
-export default function ReportsDashboard() {
-  const [tab, setTab] = useState<Tab>('eod');
+export default function ReportsDashboard({ initialTab }: { initialTab?: Tab } = {}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'eod');
 
   return (
     <div>

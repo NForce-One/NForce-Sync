@@ -96,16 +96,20 @@ export interface TeamBlockerDto {
  */
 export function prefetchTeamLeadLanding(queryClient: QueryClient, today: string): void {
   const range: DateRange = { from: today, to: today };
+  // Query keys must match useTeamLeadSummary/useTeamMemberStatuses/useTeamLeadBlockers exactly
+  // (including their trailing `teamLeadId ?? null` segment — always `null` for an actual Team
+  // Lead, who never sets it) — otherwise this prefetch silently warms a cache entry the real
+  // hooks never read, and Team Dashboard's mount pays a full cold fetch anyway.
   queryClient.prefetchQuery({
-    queryKey: ['team-lead', 'summary', range.from, range.to],
+    queryKey: ['team-lead', 'summary', range.from, range.to, null],
     queryFn: () => api.get<TeamLeadSummaryDto>('/team-lead/dashboard/summary', { params: range }).then(r => r.data),
   });
   queryClient.prefetchQuery({
-    queryKey: ['team-lead', 'member-status', range.from, range.to],
+    queryKey: ['team-lead', 'member-status', range.from, range.to, null],
     queryFn: () => api.get<MemberEodStatusDto[]>('/team-lead/team-members/status', { params: range }).then(r => r.data),
   });
   queryClient.prefetchQuery({
-    queryKey: ['team-lead', 'blockers', range.from, range.to, false],
+    queryKey: ['team-lead', 'blockers', range.from, range.to, false, null],
     queryFn: () => api.get<TeamBlockerDto[]>('/team-lead/blockers', { params: { ...range, includeAcknowledged: false } }).then(r => r.data),
   });
 }
@@ -130,11 +134,15 @@ function rangeStaleTime(live: boolean): number {
   return live ? LIVE_STALE_TIME : 5 * 60_000;
 }
 
-export function useTeamLeadSummary(range: DateRange, live = false, enabled = true) {
+// `teamLeadId` is a Super Admin-only read override — passing it as a Team Lead is a no-op
+// server-side (see TeamLeadService.resolveLeadId), so leaving it undefined for every existing
+// Team Lead caller keeps their behavior exactly as before. It's only ever supplied by the
+// Super Admin Reportee Views picker.
+export function useTeamLeadSummary(range: DateRange, live = false, enabled = true, teamLeadId?: number | null) {
   return useQuery({
-    queryKey: ['team-lead', 'summary', range.from, range.to],
+    queryKey: ['team-lead', 'summary', range.from, range.to, teamLeadId ?? null],
     queryFn: () =>
-      api.get<TeamLeadSummaryDto>('/team-lead/dashboard/summary', { params: range }).then(r => r.data),
+      api.get<TeamLeadSummaryDto>('/team-lead/dashboard/summary', { params: { ...range, teamLeadId: teamLeadId ?? undefined } }).then(r => r.data),
     enabled,
     staleTime: rangeStaleTime(live),
     refetchInterval: live ? LIVE_REFETCH_INTERVAL : false,
@@ -145,11 +153,11 @@ export function useTeamLeadSummary(range: DateRange, live = false, enabled = tru
   });
 }
 
-export function useTeamMemberStatuses(range: DateRange, live = false) {
+export function useTeamMemberStatuses(range: DateRange, live = false, teamLeadId?: number | null) {
   return useQuery({
-    queryKey: ['team-lead', 'member-status', range.from, range.to],
+    queryKey: ['team-lead', 'member-status', range.from, range.to, teamLeadId ?? null],
     queryFn: () =>
-      api.get<MemberEodStatusDto[]>('/team-lead/team-members/status', { params: range }).then(r => r.data),
+      api.get<MemberEodStatusDto[]>('/team-lead/team-members/status', { params: { ...range, teamLeadId: teamLeadId ?? undefined } }).then(r => r.data),
     staleTime: rangeStaleTime(live),
     refetchInterval: live ? LIVE_REFETCH_INTERVAL : false,
     refetchIntervalInBackground: live,
@@ -160,11 +168,11 @@ export function useTeamMemberStatuses(range: DateRange, live = false) {
 // `includeAcknowledged` defaults to false to match every existing caller (Team Dashboard's
 // "Open Blockers" KPI and "Blockers Today" widget both mean *unresolved* blockers) — only the
 // Blockers page's own list passes true, since it needs to show acknowledged ones too.
-export function useTeamLeadBlockers(range: DateRange, live = false, includeAcknowledged = false) {
+export function useTeamLeadBlockers(range: DateRange, live = false, includeAcknowledged = false, teamLeadId?: number | null) {
   return useQuery({
-    queryKey: ['team-lead', 'blockers', range.from, range.to, includeAcknowledged],
+    queryKey: ['team-lead', 'blockers', range.from, range.to, includeAcknowledged, teamLeadId ?? null],
     queryFn: () =>
-      api.get<TeamBlockerDto[]>('/team-lead/blockers', { params: { ...range, includeAcknowledged } }).then(r => r.data),
+      api.get<TeamBlockerDto[]>('/team-lead/blockers', { params: { ...range, includeAcknowledged, teamLeadId: teamLeadId ?? undefined } }).then(r => r.data),
     staleTime: rangeStaleTime(live),
     refetchInterval: live ? LIVE_REFETCH_INTERVAL : false,
     refetchIntervalInBackground: live,
@@ -172,11 +180,11 @@ export function useTeamLeadBlockers(range: DateRange, live = false, includeAckno
   });
 }
 
-export function useTeamLeadTrend(date: string, days = 7) {
+export function useTeamLeadTrend(date: string, days = 7, teamLeadId?: number | null) {
   return useQuery({
-    queryKey: ['team-lead', 'trend', date, days],
+    queryKey: ['team-lead', 'trend', date, days, teamLeadId ?? null],
     queryFn: () =>
-      api.get<DashboardTrendDto>('/team-lead/dashboard/trend', { params: { date, days } }).then(r => r.data),
+      api.get<DashboardTrendDto>('/team-lead/dashboard/trend', { params: { date, days, teamLeadId: teamLeadId ?? undefined } }).then(r => r.data),
     staleTime: 5 * 60_000,
   });
 }
@@ -197,11 +205,11 @@ export interface TeamMemberDetailDto {
  *  fetched for the member list) with the extra fields the Team Utilization detail panel
  *  needs: designation, working/logged days, last-approved-EOD timestamp, and a per-employee
  *  trend over the requested window (`days`, default 7). */
-export function useTeamMemberDetail(employeeId: number | undefined, date: string, days = 7) {
+export function useTeamMemberDetail(employeeId: number | undefined, date: string, days = 7, teamLeadId?: number | null) {
   return useQuery({
-    queryKey: ['team-lead', 'member-detail', employeeId, date, days],
+    queryKey: ['team-lead', 'member-detail', employeeId, date, days, teamLeadId ?? null],
     queryFn: () =>
-      api.get<TeamMemberDetailDto>(`/team-lead/team-members/${employeeId}/detail`, { params: { date, days } }).then(r => r.data),
+      api.get<TeamMemberDetailDto>(`/team-lead/team-members/${employeeId}/detail`, { params: { date, days, teamLeadId: teamLeadId ?? undefined } }).then(r => r.data),
     enabled: employeeId != null,
     staleTime: 5 * 60_000,
   });

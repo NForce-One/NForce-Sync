@@ -131,8 +131,12 @@ export async function updateProject(id: number, data: UpdateProjectPayload): Pro
   return res.data;
 }
 
-export async function listAllocations(projectId?: number): Promise<AllocationDto[]> {
-  const res = await api.get<AllocationDto[]>('/allocations', { params: projectId ? { projectId } : undefined });
+// `teamLeadId` is a Super Admin-only read override (see AllocationService.listAll's javadoc) —
+// ignored server-side for a PM caller, and ignored client-side too whenever `projectId` is set.
+export async function listAllocations(projectId?: number, teamLeadId?: number | null): Promise<AllocationDto[]> {
+  const res = await api.get<AllocationDto[]>('/allocations', {
+    params: { projectId: projectId ?? undefined, teamLeadId: teamLeadId ?? undefined },
+  });
   return res.data;
 }
 
@@ -173,8 +177,11 @@ export function useAllProjects() {
   return useQuery({ queryKey: ['projects', 'all'], queryFn: listAllProjects });
 }
 
-export function useAllocations(projectId?: number) {
-  return useQuery({ queryKey: ['allocations', projectId ?? 'all'], queryFn: () => listAllocations(projectId) });
+export function useAllocations(projectId?: number, teamLeadId?: number | null) {
+  return useQuery({
+    queryKey: ['allocations', projectId ?? 'all', teamLeadId ?? null],
+    queryFn: () => listAllocations(projectId, teamLeadId),
+  });
 }
 
 export function useAssignableEmployees() {

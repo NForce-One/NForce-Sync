@@ -22,9 +22,12 @@ public class AllocationController {
         this.allocationService = allocationService;
     }
 
+    // teamLeadId: see AllocationService.listAll(Long, Long) javadoc — narrows to one Team Lead's
+    // projects (Super Admin Reportee Views enhancement); ignored when projectId is also given.
     @GetMapping
-    public List<AllocationDto> listAll(@RequestParam(required = false) Long projectId) {
-        return allocationService.listAll(projectId);
+    public List<AllocationDto> listAll(@RequestParam(required = false) Long projectId,
+                                        @RequestParam(required = false) Long teamLeadId) {
+        return allocationService.listAll(projectId, teamLeadId);
     }
 
     @GetMapping("/employees")

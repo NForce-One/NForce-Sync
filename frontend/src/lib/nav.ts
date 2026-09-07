@@ -35,6 +35,24 @@ export interface NavItem {
   subItems?: NavSubItem[];
 }
 
+/**
+ * An expandable navigation group — e.g. Super Admin's "Project Manager Views" / "Team Lead
+ * Views" (Reportee Views enhancement). Renders as a collapsible parent with a down-arrow
+ * indicator; it is not itself a routable page (no `path`), only its `children` are.
+ */
+export interface NavGroup {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  children: NavItem[];
+}
+
+export type NavEntry = NavItem | NavGroup;
+
+export function isNavGroup(entry: NavEntry): entry is NavGroup {
+  return 'children' in entry;
+}
+
 /** Builds the URL a NavSubItem's search result should navigate to. */
 export function navSubItemPath(item: NavItem, sub: NavSubItem): string {
   if (sub.query) return `${item.path}?${new URLSearchParams(sub.query).toString()}`;
@@ -44,7 +62,7 @@ export function navSubItemPath(item: NavItem, sub: NavSubItem): string {
 
 export interface NavSection {
   section: string;
-  items: NavItem[];
+  items: NavEntry[];
 }
 
 export type RoleNav = NavSection[];
@@ -278,6 +296,40 @@ export const NAV: Record<Role, RoleNav> = {
       ],
     },
     {
+      // Read-only, system-wide visibility into the operational views Project Managers and Team
+      // Leads use day to day — reuses their exact page components/business logic (each already
+      // resolves a SUPERADMIN caller to system-wide data server-side; see ApprovalService/
+      // TeamLeadService/ProjectDashboardService/AllocationService's SUPERADMIN branches), at
+      // dedicated /admin/reportee/* routes rather than the PM/Team Lead's own paths, so each has
+      // its own URL for direct-link/refresh/active-highlighting purposes. Does not change PM/Team
+      // Lead workflow ownership: write actions remain scoped to their existing owners, and
+      // Blockers/Approvals are deliberately excluded from both groups (out of scope for this
+      // visibility-only enhancement — see the Super Admin Reportee Views spec).
+      section: 'Reportee Views',
+      items: [
+        {
+          key: 'ro-pm-group', label: 'Project Manager Views', icon: FolderKanban,
+          children: [
+            { key: 'ro-pm-projects', label: 'Projects',            path: '/admin/reportee/pm/projects',    icon: FolderKanban },
+            { key: 'ro-pm-alloc',    label: 'Resource Allocation',  path: '/admin/reportee/pm/allocation',  icon: Users },
+            { key: 'ro-pm-eod',      label: 'EOD',                  path: '/admin/reportee/pm/eod',         icon: ClipboardList },
+            { key: 'ro-pm-util',     label: 'Utilization',          path: '/admin/reportee/pm/utilization', icon: Activity },
+            { key: 'ro-pm-reports',  label: 'Reports',              path: '/admin/reportee/pm/reports',     icon: BarChart3 },
+          ],
+        },
+        {
+          key: 'ro-lead-group', label: 'Team Lead Views', icon: Users,
+          children: [
+            { key: 'ro-lead-projects', label: 'My Projects',         path: '/admin/reportee/lead/projects',    icon: FolderKanban },
+            { key: 'ro-lead-alloc',    label: 'Resource Allocation',  path: '/admin/reportee/lead/allocation',  icon: Users },
+            { key: 'ro-lead-eod',      label: 'EOD',                  path: '/admin/reportee/lead/eod',         icon: ClipboardList },
+            { key: 'ro-lead-util',     label: 'Utilization',          path: '/admin/reportee/lead/utilization', icon: Activity },
+            { key: 'ro-lead-reports',  label: 'Reports',              path: '/admin/reportee/lead/reports',     icon: BarChart3 },
+          ],
+        },
+      ],
+    },
+    {
       section: 'More',
       items: [
         { key: 'notifications', label: 'Notifications', path: '/notifications', icon: Bell },
@@ -288,12 +340,18 @@ export const NAV: Record<Role, RoleNav> = {
 };
 
 export function getNavPaths(role: Role): string[] {
-  return NAV[role].flatMap(s => s.items.map(i => i.path));
+  return NAV[role].flatMap(s => s.items.flatMap(entry => isNavGroup(entry) ? entry.children.map(c => c.path) : [entry.path]));
 }
 
 export function getNavItem(role: Role, path: string): { item: NavItem; section: NavSection } | undefined {
   for (const section of NAV[role]) {
-    const item = section.items.find(i => i.path === path);
-    if (item) return { item, section };
+    for (const entry of section.items) {
+      if (isNavGroup(entry)) {
+        const child = entry.children.find(c => c.path === path);
+        if (child) return { item: child, section };
+      } else if (entry.path === path) {
+        return { item: entry, section };
+      }
+    }
   }
 }

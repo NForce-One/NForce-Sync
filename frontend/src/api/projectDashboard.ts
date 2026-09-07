@@ -106,14 +106,18 @@ export interface ProjectDashboardFilterParams {
   employeeId?: number;
   teamManagerId?: number;
   client?: string;
+  /** Super Admin-only read override — narrows the system-wide dashboard to one Project
+   *  Manager's portfolio (Super Admin Reportee Views enhancement); ignored server-side for a
+   *  PM caller. See ProjectDashboardService.scopedProjects. */
+  pmId?: number;
 }
 
 // ── hooks ───────────────────────────────────────────────────────────────────────
 
-export function useProjectDashboardFilters() {
+export function useProjectDashboardFilters(pmId?: number) {
   return useQuery({
-    queryKey: ['project-dashboard', 'filters'],
-    queryFn: () => api.get<ProjectDashboardFiltersDto>('/project-dashboard/filters').then(r => r.data),
+    queryKey: ['project-dashboard', 'filters', pmId ?? null],
+    queryFn: () => api.get<ProjectDashboardFiltersDto>('/project-dashboard/filters', { params: { pmId } }).then(r => r.data),
     staleTime: 5 * 60_000,
   });
 }

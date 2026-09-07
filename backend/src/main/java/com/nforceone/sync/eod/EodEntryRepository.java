@@ -123,6 +123,18 @@ public interface EodEntryRepository extends JpaRepository<EodEntry, Long> {
     List<EodEntry> findDecidedByManagerId(@Param("managerId") Long managerId,
                                           @Param("status") EodEntry.Status status);
 
+    // Org-wide, unscoped by PM/Team Lead — backs Super Admin's read-only Approvals visibility
+    // (Reportee Views enhancement) when no specific PM/Team Lead is selected to narrow to.
+    @Query("""
+        SELECT DISTINCT e FROM EodEntry e
+        JOIN FETCH e.employee emp
+        LEFT JOIN FETCH e.tasks t
+        LEFT JOIN FETCH t.project
+        LEFT JOIN FETCH t.taskCategory
+        WHERE e.status = :status
+        """)
+    List<EodEntry> findAllByStatus(@Param("status") EodEntry.Status status);
+
     /**
      * Time-adjustment MINUTES spent inside a date window, for the monthly budget check.
      *

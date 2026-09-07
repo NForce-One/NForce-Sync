@@ -42,6 +42,20 @@ const ProjectDashboard    = lazy(() => import('./pages/pm/ProjectDashboard'));
 const ReportsDashboard    = lazy(() => import('./pages/pm/ReportsDashboard'));
 const LeadReportsDashboard = lazy(() => import('./pages/lead/ReportsDashboard'));
 const PmBlockers          = lazy(() => import('./pages/pm/Blockers'));
+
+// Super Admin Reportee Views — reuse the PM/Team Lead components above at dedicated routes;
+// only the pages that need a distinct entry point (an initial tab, or a Team-Lead-scoped
+// Resource Allocation view with no PM/Team Lead equivalent) get a thin wrapper. Projects/My
+// Projects, Utilization, and (PM) Reports/EOD reuse the same lazy chunks already declared above.
+const ReporteePmProjects    = lazy(() => import('./pages/admin/reportee/PmProjects'));
+const ReporteePmAllocation  = lazy(() => import('./pages/admin/reportee/PmAllocation'));
+const ReporteePmEod         = lazy(() => import('./pages/admin/reportee/PmEod'));
+const ReporteePmUtilization = lazy(() => import('./pages/admin/reportee/PmUtilization'));
+const ReporteePmReports     = lazy(() => import('./pages/admin/reportee/PmReports'));
+const ReporteeLeadAllocation = lazy(() => import('./pages/admin/reportee/LeadAllocation'));
+const ReporteeLeadEod        = lazy(() => import('./pages/admin/reportee/LeadEod'));
+const ReporteeLeadReports    = lazy(() => import('./pages/admin/reportee/LeadReports'));
+
 const Profile             = lazy(() => import('./pages/Profile'));
 const Notifications       = lazy(() => import('./pages/Notifications'));
 const ChangePassword      = lazy(() => import('./pages/ChangePassword'));
@@ -81,6 +95,11 @@ function ChunkPrefetcher() {
       import('./pages/admin/RolesAccess');
       import('./pages/admin/OrganizationMasters');
       import('./pages/admin/BusinessRules');
+      // Reportee Views (Super Admin visibility into PM/Team Lead operational pages) —
+      // not prefetched as eagerly as a Super Admin's own admin pages since they're a
+      // secondary surface, but still warmed so the first click isn't a cold chunk load.
+      import('./pages/admin/reportee/PmProjects');
+      import('./pages/lead/MyProjects');
     } else if (user.role === 'lead') {
       import('./pages/lead/TeamDashboard');
       import('./pages/lead/MyProjects');
@@ -226,6 +245,18 @@ function AppRoutes() {
             <Route path="/admin/integrations" element={<Placeholder title="Integrations" />} />
             <Route path="/admin/ai"           element={<Placeholder title="AI & Automation" />} />
             <Route path="/admin/audit"        element={<AuditLog />} />
+
+            {/* ── Super Admin Reportee Views ──────────── */}
+            <Route path="/admin/reportee/pm/projects"      element={<ReporteePmProjects />} />
+            <Route path="/admin/reportee/pm/allocation"    element={<ReporteePmAllocation />} />
+            <Route path="/admin/reportee/pm/eod"           element={<ReporteePmEod />} />
+            <Route path="/admin/reportee/pm/utilization"   element={<ReporteePmUtilization />} />
+            <Route path="/admin/reportee/pm/reports"       element={<ReporteePmReports />} />
+            <Route path="/admin/reportee/lead/projects"    element={<MyProjects />} />
+            <Route path="/admin/reportee/lead/allocation"  element={<ReporteeLeadAllocation />} />
+            <Route path="/admin/reportee/lead/eod"         element={<ReporteeLeadEod />} />
+            <Route path="/admin/reportee/lead/utilization" element={<TeamUtilization />} />
+            <Route path="/admin/reportee/lead/reports"     element={<ReporteeLeadReports />} />
 
             {/* ── Shared ─────────────────────────────── */}
             <Route path="/notifications"   element={<Notifications />} />

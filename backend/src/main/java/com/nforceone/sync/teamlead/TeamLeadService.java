@@ -107,12 +107,12 @@ public class TeamLeadService {
      * over the range); per-member snapshot fields (status, utilization) are always read
      * as of {@code to} — a single status/util field can't represent more than one day.
      */
-    public TeamLeadSummaryDto getSummary(LocalDate from, LocalDate to, String actingEmail) {
-        AppUser lead = requireLead(actingEmail);
+    public TeamLeadSummaryDto getSummary(LocalDate from, LocalDate to, String actingEmail, Long teamLeadId) {
+        Long leadId = resolveLeadId(actingEmail, teamLeadId);
         BusinessRuleConfig config = requireConfig();
         boolean holidayToday = holidayRepository.existsByHolidayDate(to);
 
-        List<AppUser> members = activeMembers(lead.getId());
+        List<AppUser> members = activeMembers(leadId);
         List<Long> memberIds = members.stream().map(AppUser::getId).toList();
         Map<Long, EodEntry> entryByMember = entriesForMembersOnDate(memberIds, to);
         Map<Long, BigDecimal> pctByMember = utilizationService.resolveUtilizationPctForEmployees(memberIds, to);
@@ -146,7 +146,7 @@ public class TeamLeadService {
                 ? utilSum.divide(BigDecimal.valueOf(utilCount), 2, RoundingMode.HALF_UP)
                 : null;
 
-        int activeBlockers = (int) taskRepository.findBlockedByManagerId(lead.getId())
+        int activeBlockers = (int) taskRepository.findBlockedByManagerId(leadId)
                 .stream()
                 .filter(t -> inRange(t.getEodEntry().getEntryDate(), from, to))
                 .filter(t -> t.getAcknowledgedAt() == null)
@@ -158,14 +158,14 @@ public class TeamLeadService {
                 toThresholds(config), utilizationService.isWorkingDay(to));
     }
 
-    public List<MemberEodStatusDto> getMemberStatuses(LocalDate from, LocalDate to, String actingEmail) {
-        AppUser lead = requireLead(actingEmail);
+    public List<MemberEodStatusDto> getMemberStatuses(LocalDate from, LocalDate to, String actingEmail, Long teamLeadId) {
+        Long leadId = resolveLeadId(actingEmail, teamLeadId);
         BusinessRuleConfig config = requireConfig();
         boolean holidayToday = holidayRepository.existsByHolidayDate(to);
 
-        List<AppUser> members = activeMembers(lead.getId());
+        List<AppUser> members = activeMembers(leadId);
         List<Long> memberIds = members.stream().map(AppUser::getId).toList();
-        List<TeamBlockerDto> openBlockers = getBlockers(from, to, actingEmail, false);
+        List<TeamBlockerDto> openBlockers = getBlockers(from, to, actingEmail, false, teamLeadId);
         Map<Long, List<String>> projectNamesByEmployee = activeProjectNamesByEmployee(memberIds, to);
         Map<Long, EodEntry> entryByMember = entriesForMembersOnDate(memberIds, to);
         Map<Long, BigDecimal> pctByMember = utilizationService.resolveUtilizationPctForEmployees(memberIds, to);
@@ -192,9 +192,9 @@ public class TeamLeadService {
     // hasOpenBlocker flag all rely on this endpoint returning only *unresolved* blockers, so
     // acknowledged ones must stay excluded by default rather than changing what those already show.
     @Transactional(readOnly = true)
-    public List<TeamBlockerDto> getBlockers(LocalDate from, LocalDate to, String actingEmail, boolean includeAcknowledged) {
-        AppUser lead = requireLead(actingEmail);
-        List<EodTask> tasks = taskRepository.findBlockedByManagerIdAndDateRange(lead.getId(), from, to)
+    public List<TeamBlockerDto> getBlockers(LocalDate from, LocalDate to, String actingEmail, boolean includeAcknowledged, Long teamLeadId) {
+        Long leadId = resolveLeadId(actingEmail, teamLeadId);
+        List<EodTask> tasks = taskRepository.findBlockedByManagerIdAndDateRange(leadId, from, to)
                 .stream()
                 .filter(t -> includeAcknowledged || t.getAcknowledgedAt() == null)
                 .toList();
@@ -223,7 +223,7 @@ public class TeamLeadService {
         AppUser lead = requireLead(actingEmail);
         EodTask task = taskRepository.findById(taskId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Blocker not found"));
-        if (!task.getEodEntry().getManagerId().equals(lead.getId())) {
+        if (lead.getRole() != AppUser.Role.SUPERADMIN && !task.getEodEntry().getManagerId().equals(lead.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
         return TeamBlockerDto.from(task, replyRepository.findByTaskIdOrderByCreatedAtAsc(taskId));
@@ -321,10 +321,10 @@ public class TeamLeadService {
         return description == null || description.isBlank() ? "a blocker" : description;
     }
 
-    public DashboardTrendDto getTrend(LocalDate endDate, int days, String actingEmail) {
-        AppUser lead = requireLead(actingEmail);
-        List<AppUser> members = activeMembers(lead.getId());
-        List<EodTask> allBlocked = taskRepository.findBlockedByManagerId(lead.getId());
+    public DashboardTrendDto getTrend(LocalDate endDate, int days, String actingEmail, Long teamLeadId) {
+        Long leadId = resolveLeadId(actingEmail, teamLeadId);
+        List<AppUser> members = activeMembers(leadId);
+        List<EodTask> allBlocked = taskRepository.findBlockedByManagerId(leadId);
 
         LocalDate startDate = endDate.minusDays(days - 1);
         List<Long> memberIds = members.stream().map(AppUser::getId).toList();
@@ -409,9 +409,9 @@ public class TeamLeadService {
      * 50-100+ sequential queries and was the actual cause of the multi-second lag switching
      * between employees on the Team Utilization page.
      */
-    public TeamMemberDetailDto getMemberDetail(Long employeeId, LocalDate date, int days, String actingEmail) {
-        AppUser lead = requireLead(actingEmail);
-        AppUser member = requireDirectReport(employeeId, lead.getId());
+    public TeamMemberDetailDto getMemberDetail(Long employeeId, LocalDate date, int days, String actingEmail, Long teamLeadId) {
+        Long leadId = resolveLeadId(actingEmail, teamLeadId);
+        AppUser member = requireDirectReport(employeeId, leadId);
 
         String designation = member.getDesignationId() == null ? null
                 : designationRepository.findById(member.getDesignationId())
@@ -532,6 +532,28 @@ public class TeamLeadService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
         return actor;
+    }
+
+    /**
+     * Resolves which Team Lead's data a read-only dashboard/blockers query should be scoped to.
+     * A Team Lead is always scoped to themselves. A Super Admin may pass {@code requestedTeamLeadId}
+     * to view a specific Team Lead's operational data (read-only visibility, per the Super Admin
+     * Reportee Views enhancement) — omitting it falls back to the Super Admin's own id, which
+     * naturally has no direct reports and so reads as an empty team, matching prior behavior.
+     * This does not change write/approval ownership — acknowledge/status/reply actions still
+     * resolve via {@link #requireLead} and remain scoped to the actor's own id.
+     */
+    private Long resolveLeadId(String actingEmail, Long requestedTeamLeadId) {
+        AppUser actor = requireLead(actingEmail);
+        if (actor.getRole() == AppUser.Role.SUPERADMIN && requestedTeamLeadId != null) {
+            AppUser target = userRepository.findById(requestedTeamLeadId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Team Lead not found"));
+            if (target.getRole() != AppUser.Role.MANAGER) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Target user is not a Team Lead");
+            }
+            return target.getId();
+        }
+        return actor.getId();
     }
 
     private BusinessRuleConfig requireConfig() {

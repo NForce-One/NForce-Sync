@@ -70,13 +70,13 @@ public class TeamLeadProjectService {
         this.eodTaskRepository = eodTaskRepository;
     }
 
-    public List<ProjectFullDto> listMyProjects(String actingEmail, LocalDate onDate) {
-    AppUser actor = resolveActor(actingEmail);
-    return projectRepository.findByPmIdOrderByNameAsc(actor.getId())
-            .stream()
-            .map(p -> ProjectFullDto.from(p, activeAssignedEmployees(p.getId(), onDate).size()))
-            .toList();
-}
+    public List<ProjectFullDto> listMyProjects(String actingEmail, LocalDate onDate, Long teamLeadId) {
+        Long targetId = resolveTeamLeadId(actingEmail, teamLeadId);
+        return projectRepository.findByPmIdOrderByNameAsc(targetId)
+                .stream()
+                .map(p -> ProjectFullDto.from(p, activeAssignedEmployees(p.getId(), onDate).size()))
+                .toList();
+    }
 
     /**
      * Project details plus its currently assigned employees, for the project details popup.
@@ -88,9 +88,9 @@ public class TeamLeadProjectService {
      * Team Lead's own personal allocation — that person is already shown separately as "Team
      * Lead" and must not also appear in "Assigned Employees".
      */
-    public ProjectDetailDto getProjectDetail(String actingEmail, Long projectId, LocalDate onDate) {
-        AppUser actor = resolveActor(actingEmail);
-        Project project = requireProjectAssignedToTeamLead(projectId, actor.getId());
+    public ProjectDetailDto getProjectDetail(String actingEmail, Long projectId, LocalDate onDate, Long teamLeadId) {
+        Long targetId = resolveTeamLeadId(actingEmail, teamLeadId);
+        Project project = requireProjectAssignedToTeamLead(projectId, targetId);
 
         return ProjectDetailDto.from(project, activeAssignedEmployees(projectId, onDate));
     }
@@ -284,6 +284,26 @@ public class TeamLeadProjectService {
         return appUserRepository.findByEmailAndDeletedAtIsNull(actingEmail)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.INTERNAL_SERVER_ERROR, "Authenticated user record missing"));
+    }
+
+    /**
+     * A Team Lead is always scoped to their own project list. A Super Admin may pass
+     * {@code requestedTeamLeadId} to view a specific Team Lead's projects (read-only visibility,
+     * per the Super Admin Reportee Views enhancement) — omitting it falls back to the Super
+     * Admin's own id, which naturally owns no projects and so reads as an empty list, matching
+     * prior behavior.
+     */
+    private Long resolveTeamLeadId(String actingEmail, Long requestedTeamLeadId) {
+        AppUser actor = resolveActor(actingEmail);
+        if (actor.getRole() == AppUser.Role.SUPERADMIN && requestedTeamLeadId != null) {
+            AppUser target = appUserRepository.findById(requestedTeamLeadId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Team Lead not found"));
+            if (target.getRole() != AppUser.Role.MANAGER) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Target user is not a Team Lead");
+            }
+            return target.getId();
+        }
+        return actor.getId();
     }
 
     /**

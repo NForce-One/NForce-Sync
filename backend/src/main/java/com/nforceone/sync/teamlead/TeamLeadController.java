@@ -38,26 +38,29 @@ public class TeamLeadController {
     @GetMapping("/dashboard/summary")
     public TeamLeadSummaryDto getSummary(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long teamLeadId) {
         validateRange(from, to);
-        return teamLeadService.getSummary(from, to, actingEmail());
+        return teamLeadService.getSummary(from, to, actingEmail(), teamLeadId);
     }
 
     @GetMapping("/team-members/status")
     public List<MemberEodStatusDto> getMemberStatuses(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) Long teamLeadId) {
         validateRange(from, to);
-        return teamLeadService.getMemberStatuses(from, to, actingEmail());
+        return teamLeadService.getMemberStatuses(from, to, actingEmail(), teamLeadId);
     }
 
     @GetMapping("/blockers")
     public List<TeamBlockerDto> getBlockers(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(defaultValue = "false") boolean includeAcknowledged) {
+            @RequestParam(defaultValue = "false") boolean includeAcknowledged,
+            @RequestParam(required = false) Long teamLeadId) {
         validateRange(from, to);
-        return teamLeadService.getBlockers(from, to, actingEmail(), includeAcknowledged);
+        return teamLeadService.getBlockers(from, to, actingEmail(), includeAcknowledged, teamLeadId);
     }
 
     @GetMapping("/blockers/{taskId}")
@@ -74,19 +77,21 @@ public class TeamLeadController {
     @GetMapping("/dashboard/trend")
     public DashboardTrendDto getTrend(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @RequestParam(defaultValue = "7") int days) {
-        return teamLeadService.getTrend(date, days, actingEmail());
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) Long teamLeadId) {
+        return teamLeadService.getTrend(date, days, actingEmail(), teamLeadId);
     }
 
     @GetMapping("/team-members/{employeeId}/detail")
     public TeamMemberDetailDto getMemberDetail(
             @PathVariable Long employeeId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @RequestParam(defaultValue = "7") int days) {
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) Long teamLeadId) {
         if (days < 1 || days > 90) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "'days' must be between 1 and 90");
         }
-        return teamLeadService.getMemberDetail(employeeId, date, days, actingEmail());
+        return teamLeadService.getMemberDetail(employeeId, date, days, actingEmail(), teamLeadId);
     }
 
     @PatchMapping("/blockers/{taskId}/acknowledge")

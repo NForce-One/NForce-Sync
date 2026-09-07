@@ -28,20 +28,28 @@ public class ApprovalController {
     // from/to are optional but must be supplied together — omitting both falls back to the
     // full all-time backlog, preserving today's behavior everywhere this endpoint is already
     // used unscoped. Supplying only one is rejected below rather than silently ignored.
+    // pmId/managerId are honored only when the caller is SUPERADMIN (enforced in
+    // ApprovalService) — they let a Super Admin narrow the system-wide pending backlog to one
+    // specific PM's or Team Lead's view, per the Super Admin Reportee Views enhancement.
     @GetMapping("/pending")
     public List<EodEntryDto> getPending(@RequestParam(required = false) LocalDate from,
-                                        @RequestParam(required = false) LocalDate to) {
+                                        @RequestParam(required = false) LocalDate to,
+                                        @RequestParam(required = false) Long pmId,
+                                        @RequestParam(required = false) Long managerId) {
         if ((from == null) != (to == null)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "from and to must both be supplied, or both omitted");
         }
-        return approvalService.getPendingForActor(actingEmail(), from, to);
+        return approvalService.getPendingForActor(actingEmail(), from, to, pmId, managerId);
     }
 
     // PM-only — entries this PM has personally approved/rejected (Approved/Rejected tabs).
+    // pmId/managerId: see getPending's javadoc — SUPERADMIN-only narrowing.
     @GetMapping("/history")
-    public List<EodEntryDto> getDecidedHistory(@RequestParam EodEntry.Status status) {
-        return approvalService.getDecidedForActor(actingEmail(), status);
+    public List<EodEntryDto> getDecidedHistory(@RequestParam EodEntry.Status status,
+                                               @RequestParam(required = false) Long pmId,
+                                               @RequestParam(required = false) Long managerId) {
+        return approvalService.getDecidedForActor(actingEmail(), status, pmId, managerId);
     }
 
     // Full approve/reject/request-changes audit trail for one entry, oldest first.

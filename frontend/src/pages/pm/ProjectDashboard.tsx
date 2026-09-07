@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   FolderKanban, CheckCircle2, PauseCircle, Archive, Gauge,
   Target, TrendingUp, AlertTriangle, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, X,
@@ -9,6 +10,8 @@ import {
 } from 'recharts';
 import { KpiCard } from '../../components/KpiCard';
 import { useIsPhone } from '../../lib/useMediaQuery';
+import { useAuth } from '../../lib/auth';
+import { searchUsers } from '../../api/admin';
 import {
   useProjectDashboardFilters, useProjectDashboardSummary,
   type MissingEodRowDto, type ProjectUtilizationRowDto, type ResourceUtilizationRowDto,
@@ -587,12 +590,36 @@ interface Filters {
   employeeId: string;
   teamManagerId: string;
   client: string;
+  /** Super Admin-only — see ProjectDashboardFilterParams.pmId. Always '' for a PM caller. */
+  pmId: string;
 }
 
-function FilterBar({ filters, onChange, onDateStatusChange }: {
+// Super Admin-only "view as Project Manager" narrowing (Reportee Views enhancement) — never
+// rendered for a PM, whose portfolio is always resolved server-side from their own id.
+function PmScopeSelect({ value, onChange }: { value: string; onChange: (pmId: string) => void }) {
+  const { data: pms } = useQuery({
+    queryKey: ['users', 'search', 'PM'],
+    queryFn: () => searchUsers({ role: 'PM' }),
+    staleTime: 5 * 60_000,
+  });
+  return (
+    <select
+      aria-label="Filter by Project Manager"
+      style={{ ...inputStyle, width: 200 }}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      <option value="">All Project Managers (system-wide)</option>
+      {(pms ?? []).map(pm => <option key={pm.id} value={pm.id}>{pm.fullName}</option>)}
+    </select>
+  );
+}
+
+function FilterBar({ filters, onChange, onDateStatusChange, isSuperAdmin }: {
   filters: Filters; onChange: (next: Filters) => void; onDateStatusChange: (status: DateRangeStatus) => void;
+  isSuperAdmin: boolean;
 }) {
-  const { data: options } = useProjectDashboardFilters();
+  const { data: options } = useProjectDashboardFilters(filters.pmId ? Number(filters.pmId) : undefined);
   // Bumped on "Clear" to remount DateRangeFilter, resetting its internal text/error state to
   // match the now-cleared from/to props — simpler than lifting that state up into this bar.
   const [clearGen, setClearGen] = useState(0);
@@ -600,6 +627,13 @@ function FilterBar({ filters, onChange, onDateStatusChange }: {
   return (
     <Card style={{ padding: '14px 16px', marginBottom: 20 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+        {isSuperAdmin && (
+          <PmScopeSelect
+            value={filters.pmId}
+            onChange={pmId => onChange({ ...filters, pmId, projectId: '', employeeId: '', teamManagerId: '', client: '' })}
+          />
+        )}
+
         <select
           aria-label="Filter by project"
           style={{ ...inputStyle, width: 190 }}
@@ -864,6 +898,8 @@ function MissingEodTable({ rows }: { rows: MissingEodRowDto[] }) {
 // ── main page ──────────────────────────────────────────────────────────────────
 
 export default function ProjectDashboard() {
+  const { user } = useAuth();
+  const isSuperAdmin = user!.role === 'superadmin';
   // Recharts measures axis width in JS, so this one can't be done in CSS.
   const isPhone = useIsPhone();
   // From/To default to the 1st of the current month through today, computed fresh off the
@@ -874,7 +910,7 @@ export default function ProjectDashboard() {
   // by the same user or a different one, always starts from this computed default again.
   const [filters, setFilters] = useState<Filters>({
     from: firstDayOfMonthIsoLocal(), to: todayIsoLocal(),
-    projectId: '', employeeId: '', teamManagerId: '', client: '',
+    projectId: '', employeeId: '', teamManagerId: '', client: '', pmId: '',
   });
   // Gates whether the dashboard shows data at all — see DateRangeFilter above. Starts 'ready'
   // since the initial From+To pair is already a valid, complete range.
@@ -887,6 +923,7 @@ export default function ProjectDashboard() {
     employeeId: filters.employeeId ? Number(filters.employeeId) : undefined,
     teamManagerId: filters.teamManagerId ? Number(filters.teamManagerId) : undefined,
     client: filters.client || undefined,
+    pmId: isSuperAdmin && filters.pmId ? Number(filters.pmId) : undefined,
   }, dateFilterStatus !== 'invalid');
 
   if (isPending) {
@@ -944,7 +981,7 @@ export default function ProjectDashboard() {
         </p>
       </div>
 
-      <FilterBar filters={filters} onChange={setFilters} onDateStatusChange={setDateFilterStatus} />
+      <FilterBar filters={filters} onChange={setFilters} onDateStatusChange={setDateFilterStatus} isSuperAdmin={isSuperAdmin} />
 
       {dateFilterStatus === 'invalid' ? (
         <Card style={{ padding: '40px 20px', textAlign: 'center' }}>

@@ -14,6 +14,8 @@ import {
 } from '../../api/teamLead';
 import { todayISO as localTodayISO, toLocalISODate } from '../../lib/date';
 import { readStoredDateFilter, resolveBlockersDateFilter, writeStoredDateFilter } from '../../lib/blockersDateFilter';
+import { ReporteeScopePicker } from '../../components/ReporteeScopePicker';
+import { useAuth } from '../../lib/auth';
 
 // ── Table layout ───────────────────────────────────────────────────────────────
 // Header row and body rows must share one template or the columns desync.
@@ -467,7 +469,7 @@ function InfoField({ icon, label, children }: { icon: React.ReactNode; label: st
   );
 }
 
-function DetailPanel({ b, range, onClose }: { b: TeamBlockerDto; range: DateRange; onClose: () => void }) {
+function DetailPanel({ b, range, onClose, readOnly = false }: { b: TeamBlockerDto; range: DateRange; onClose: () => void; readOnly?: boolean }) {
   const { date: reportedDate, time: reportedTime } = fmtDateTimeParts(b.submittedAt ?? `${b.entryDate}T09:00:00`);
   const setStatus = useSetBlockerStatus(range);
   const [confirmResolve, setConfirmResolve] = useState(false);
@@ -494,7 +496,7 @@ function DetailPanel({ b, range, onClose }: { b: TeamBlockerDto; range: DateRang
             ) : (
               <StatusDropdown
                 status={b.status}
-                disabled={setStatus.isPending}
+                disabled={setStatus.isPending || readOnly}
                 onChange={(status) => {
                   if (status === 'RESOLVED') setConfirmResolve(true);
                   else setStatus.mutate({ taskId: b.taskId, status });
@@ -582,6 +584,9 @@ const PAGE_SIZE = 8;
 // ── main ───────────────────────────────────────────────────────────────────────────
 
 export default function Blockers() {
+  const { user } = useAuth();
+  const isSuperAdmin = user!.role === 'superadmin';
+  const [teamLeadId, setTeamLeadId] = useState<number | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightParam = searchParams.get('highlight');
   const highlightId = highlightParam ? Number(highlightParam) : null;
@@ -606,7 +611,7 @@ export default function Blockers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { data: blockers, isPending, isFetching, isError, refetch } = useTeamLeadBlockers(range, isToday, true);
+  const { data: blockers, isPending, isFetching, isError, refetch } = useTeamLeadBlockers(range, isToday, true, teamLeadId);
 
   // "Today" live-polls in the background (see useTeamLeadBlockers' refetchInterval), so raw
   // isFetching can't drive the date-filter loading UI directly — every silent poll would flip
@@ -743,6 +748,9 @@ export default function Blockers() {
   return (
     <div className="nf-r-stack" style={{ display: 'grid', gridTemplateColumns: selectedBlocker ? '1.7fr 1fr' : '1fr', gap: 16, alignItems: 'start' }}>
       <div>
+        {isSuperAdmin && (
+          <ReporteeScopePicker role="MANAGER" label="Team Lead" value={teamLeadId} onChange={setTeamLeadId} />
+        )}
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
           <div>
@@ -954,7 +962,7 @@ export default function Blockers() {
 
       {selectedBlocker && (
         <div style={{ position: 'sticky', top: 0 }}>
-          <DetailPanel b={selectedBlocker} range={range} onClose={() => setSelectedTaskId(null)} />
+          <DetailPanel b={selectedBlocker} range={range} onClose={() => setSelectedTaskId(null)} readOnly={isSuperAdmin} />
         </div>
       )}
     </div>

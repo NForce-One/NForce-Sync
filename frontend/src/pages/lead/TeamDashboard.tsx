@@ -20,6 +20,7 @@ import {
   type DateRange, type MemberEodStatus, type MemberEodStatusDto, type TeamBlockerDto, type TeamLeadSummaryDto,
   type TrendPointDto,
 } from '../../api/teamLead';
+import { ReporteeScopePicker } from '../../components/ReporteeScopePicker';
 
 // ── status config ──────────────────────────────────────────────────────────────
 // SUBMITTED here means the entry has been through review and is APPROVED (backend
@@ -556,6 +557,10 @@ export default function TeamDashboard() {
   const todayISO = localTodayISO();
   const { user } = useAuth();
   const userId = user!.id;
+  const isSuperAdmin = user!.role === 'superadmin';
+  // Super Admin-only "view as Team Lead" scope (Reportee Views enhancement) — always null for
+  // an actual Team Lead, who never sees the picker that sets it.
+  const [teamLeadId, setTeamLeadId] = useState<number | null>(null);
 
   // Selected date/range lives in the URL (?mode=today|yesterday|range&from=&to=) so it survives
   // navigation within the session, is shareable/bookmarkable, and only ever changes on an
@@ -616,10 +621,10 @@ export default function TeamDashboard() {
   const {
     data: summary, isPending: summaryPending, isFetching: summaryFetching, isError: summaryError,
     refetch: refetchSummary, dataUpdatedAt,
-  } = useTeamLeadSummary(range, isToday);
-  const { data: members, isPending: membersPending, isFetching: membersFetching, isError: membersError, refetch: refetchMembers } = useTeamMemberStatuses(range, isToday);
-  const { data: blockers, isPending: blockersPending, isFetching: blockersFetching } = useTeamLeadBlockers(range, isToday);
-  const { data: trend, isPending: trendPending } = useTeamLeadTrend(anchorDate, 7);
+  } = useTeamLeadSummary(range, isToday, true, teamLeadId);
+  const { data: members, isPending: membersPending, isFetching: membersFetching, isError: membersError, refetch: refetchMembers } = useTeamMemberStatuses(range, isToday, teamLeadId);
+  const { data: blockers, isPending: blockersPending, isFetching: blockersFetching } = useTeamLeadBlockers(range, isToday, false, teamLeadId);
+  const { data: trend, isPending: trendPending } = useTeamLeadTrend(anchorDate, 7, teamLeadId);
 
   // Shared cache with the sidebar badge and Approvals page (see usePendingApprovalsCount's own
   // doc comment) — scoped to the dashboard's own selected `range` so the "Review approvals"
@@ -728,6 +733,9 @@ export default function TeamDashboard() {
 
   return (
     <div>
+      {isSuperAdmin && (
+        <ReporteeScopePicker role="MANAGER" label="Team Lead" value={teamLeadId} onChange={setTeamLeadId} />
+      )}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, gap: 16, flexWrap: 'wrap' }}>
         <div>

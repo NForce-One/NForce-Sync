@@ -23,16 +23,20 @@ public class ProjectDashboardController {
         this.dashboardService = dashboardService;
     }
 
-    /** Option lists (projects/employees/teams/clients) for the dashboard's filter bar. */
+    /** Option lists (projects/employees/teams/clients) for the dashboard's filter bar.
+     *  {@code pmId}: SUPERADMIN-only narrowing to one Project Manager's portfolio (see
+     *  ProjectDashboardService.scopedProjects); ignored for a PM caller. */
     @GetMapping("/filters")
-    public ProjectDashboardFiltersDto getFilters() {
-        return dashboardService.getFilters(actingEmail());
+    public ProjectDashboardFiltersDto getFilters(@RequestParam(required = false) Long pmId) {
+        return dashboardService.getFilters(actingEmail(), pmId);
     }
 
     /**
      * The full dashboard payload in one round trip — every summary card and widget — scoped to
      * the caller's own projects and optionally narrowed by the given filters. Defaults the date
      * range to the current month when omitted.
+     * {@code pmId}: SUPERADMIN-only narrowing to one Project Manager's portfolio; ignored for a
+     * PM caller, who always stays scoped to their own projects regardless of what's passed.
      */
     @GetMapping("/summary")
     public ProjectDashboardSummaryDto getSummary(
@@ -41,12 +45,13 @@ public class ProjectDashboardController {
             @RequestParam(required = false) Long projectId,
             @RequestParam(required = false) Long employeeId,
             @RequestParam(required = false) Long teamManagerId,
-            @RequestParam(required = false) String client) {
+            @RequestParam(required = false) String client,
+            @RequestParam(required = false) Long pmId) {
         LocalDate today = LocalDate.now();
         LocalDate effectiveFrom = from != null ? from : today.withDayOfMonth(1);
         LocalDate effectiveTo = to != null ? to : today;
         return dashboardService.getSummary(
-                actingEmail(), effectiveFrom, effectiveTo, projectId, employeeId, teamManagerId, client);
+                actingEmail(), effectiveFrom, effectiveTo, projectId, employeeId, teamManagerId, client, pmId);
     }
 
     private String actingEmail() {

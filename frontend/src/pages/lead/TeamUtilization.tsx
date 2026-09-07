@@ -16,6 +16,7 @@ import {
 } from '../../api/teamLead';
 import { useMyLeadProjects } from '../../api/teamLeadProjects';
 import { RingGauge } from '../../components/RingGauge';
+import { ReporteeScopePicker } from '../../components/ReporteeScopePicker';
 
 // ── status derivation ───────────────────────────────────────────────────────────
 // Reuses the exact status/underutilized/overloaded fields TeamLeadService already computes
@@ -434,13 +435,13 @@ function WeeklyTrendChart({ points }: { points: { date: string; value: number | 
 
 type TrendRange = '7' | '14';
 
-function DetailPanel({ member, dateISO }: { member: MergedMember; dateISO: string }) {
+function DetailPanel({ member, dateISO, teamLeadId }: { member: MergedMember; dateISO: string; teamLeadId?: number | null }) {
   const [trendRange, setTrendRange] = useState<TrendRange>('7');
   // Switching the selected member resets the trend window back to the default — otherwise a
   // 14-day pick made for one employee would silently carry over and apply to the next.
   useEffect(() => { setTrendRange('7'); }, [member.employeeId]);
 
-  const { data: detail, isPending, isError, refetch } = useTeamMemberDetail(member.employeeId, dateISO, Number(trendRange));
+  const { data: detail, isPending, isError, refetch } = useTeamMemberDetail(member.employeeId, dateISO, Number(trendRange), teamLeadId);
   const color = STATUS_CFG[member.status].color;
   const remaining = Math.max(0, member.availableHours - member.approvedHours);
 
@@ -557,6 +558,11 @@ const MEMBER_LIST_CAP = 8;
 
 export default function TeamUtilization() {
   const { user } = useAuth();
+  const isSuperAdmin = user!.role === 'superadmin';
+  // Super Admin-only "view as Team Lead" scope (Reportee Views enhancement) — always null for
+  // an actual Team Lead, whose own id (below) drives everything as before.
+  const [teamLeadId, setTeamLeadId] = useState<number | null>(null);
+  const effectiveLeadId = isSuperAdmin ? (teamLeadId ?? undefined) : user?.id;
   const queryClient = useQueryClient();
   const todayISO = localTodayISO();
   const [dateISO, setDateISO] = useState(todayISO);
@@ -568,14 +574,14 @@ export default function TeamUtilization() {
   const [showAllMembers, setShowAllMembers] = useState(false);
 
   const range = useMemo(() => ({ from: dateISO, to: dateISO }), [dateISO]);
-  const { data: statuses, isPending: statusesLoading, isError, refetch } = useTeamMemberStatuses(range);
-  const { data: teamUtil, isPending: utilLoading } = useTeamUtil(user?.id, dateISO);
-  const { data: summary } = useTeamLeadSummary(range);
+  const { data: statuses, isPending: statusesLoading, isError, refetch } = useTeamMemberStatuses(range, false, isSuperAdmin ? teamLeadId : undefined);
+  const { data: teamUtil, isPending: utilLoading } = useTeamUtil(effectiveLeadId, dateISO);
+  const { data: summary } = useTeamLeadSummary(range, false, true, isSuperAdmin ? teamLeadId : undefined);
   // Same source of truth as "My Projects" (TeamLeadProjectService.listMyProjects, scoped by
   // Project.pm to the logged-in Team Lead) — the Project filter must offer every project
   // actually assigned to this Team Lead, not just whatever project names happen to appear on
   // a team member's EOD entry for the single selected date (see allProjects below).
-  const { data: leadProjects } = useMyLeadProjects();
+  const { data: leadProjects } = useMyLeadProjects(undefined, isSuperAdmin ? teamLeadId : undefined);
 
   const isPending = statusesLoading || utilLoading;
   const workingDay = summary?.workingDay ?? true;
@@ -687,6 +693,9 @@ export default function TeamUtilization() {
 
   return (
     <div>
+      {isSuperAdmin && (
+        <ReporteeScopePicker role="MANAGER" label="Team Lead" value={teamLeadId} onChange={setTeamLeadId} />
+      )}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, gap: 14, flexWrap: 'wrap' }}>
         <div>
@@ -857,7 +866,7 @@ export default function TeamUtilization() {
 
         {/* Right: detail panel */}
         {selected ? (
-          <DetailPanel member={selected} dateISO={dateISO} />
+          <DetailPanel member={selected} dateISO={dateISO} teamLeadId={teamLeadId} />
         ) : (
           <Card style={{ padding: '48px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 13, color: 'var(--txt-dim)' }}>Select a team member to see details.</div>

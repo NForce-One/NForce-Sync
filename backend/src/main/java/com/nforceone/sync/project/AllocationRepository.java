@@ -21,6 +21,14 @@ public interface AllocationRepository extends JpaRepository<Allocation, Long> {
            "WHERE a.project.id = :projectId ORDER BY a.effectiveFrom DESC")
     List<Allocation> findByProjectIdWithRefs(@Param("projectId") Long projectId);
 
+    // Every allocation on a project this Team Lead leads (Project.pm — the Team Lead assignment,
+    // not the personal-allocation relation) — backs Super Admin's read-only "view as Team Lead"
+    // Resource Allocation visibility (Reportee Views enhancement). Filters via a join on
+    // project.pm.id rather than fetching pm eagerly, so this costs no extra round trip per row.
+    @Query("SELECT a FROM Allocation a JOIN FETCH a.employee JOIN FETCH a.project p " +
+           "WHERE p.pm.id = :teamLeadId ORDER BY a.effectiveFrom DESC")
+    List<Allocation> findByProjectPmIdWithRefs(@Param("teamLeadId") Long teamLeadId);
+
     /**
      * Headcount for the Projects tab. Counts only EMPLOYEE-role allocations so the number agrees
      * with the rows the Allocation tab actually shows — a plain count would include leads and

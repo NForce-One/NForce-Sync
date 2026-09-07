@@ -52,9 +52,28 @@ public class AllocationService {
      */
     @Transactional(readOnly = true)
     public List<AllocationDto> listAll(Long projectId) {
-        List<Allocation> allocations = projectId != null
-                ? allocationRepository.findByProjectIdWithRefs(projectId)
-                : allocationRepository.findAllWithRefsOrderByEffectiveFromDesc();
+        return listAll(projectId, null);
+    }
+
+    /**
+     * {@code teamLeadId} is a Super Admin-only read override (Super Admin Reportee Views
+     * enhancement) — narrows the list to allocations on projects this specific Team Lead leads
+     * (Project.pm), for the "Team Lead Views → Resource Allocation" reportee page. Ignored
+     * whenever {@code projectId} is also given (that filter already narrows it further). With no
+     * filter at all, {@link #listAll(Long)} already returns every allocation org-wide to any PM
+     * or Super Admin caller today, so adding this narrower filter option introduces no new data
+     * exposure — it only lets the caller see LESS than the existing unfiltered default.
+     */
+    @Transactional(readOnly = true)
+    public List<AllocationDto> listAll(Long projectId, Long teamLeadId) {
+        List<Allocation> allocations;
+        if (projectId != null) {
+            allocations = allocationRepository.findByProjectIdWithRefs(projectId);
+        } else if (teamLeadId != null) {
+            allocations = allocationRepository.findByProjectPmIdWithRefs(teamLeadId);
+        } else {
+            allocations = allocationRepository.findAllWithRefsOrderByEffectiveFromDesc();
+        }
         return allocations.stream()
                 .filter(a -> a.getEmployee().getRole() == AppUser.Role.EMPLOYEE)
                 .map(AllocationDto::from)

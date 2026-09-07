@@ -59,9 +59,13 @@ export interface ProjectDetailDto {
   employees: ProjectDetailEmployeeDto[];
 }
 
-/** Projects the signed-in Team Lead is personally allocated to (not their team's). */
-export async function listMyLeadProjects(date?: string): Promise<ProjectFullDto[]> {
-  const res = await api.get<ProjectFullDto[]>('/team-lead/projects', { params: date ? { date } : undefined });
+/** Projects the signed-in Team Lead is personally allocated to (not their team's).
+ *  `teamLeadId` is a Super Admin-only read override (see TeamLeadProjectService) — ignored
+ *  server-side for a Team Lead caller, so omitting it keeps existing behavior unchanged. */
+export async function listMyLeadProjects(date?: string, teamLeadId?: number | null): Promise<ProjectFullDto[]> {
+  const res = await api.get<ProjectFullDto[]>('/team-lead/projects', {
+    params: { date: date ?? undefined, teamLeadId: teamLeadId ?? undefined },
+  });
   return res.data;
 }
 
@@ -94,8 +98,11 @@ export async function getProjectDetail(id: number): Promise<ProjectDetailDto> {
 
 // ── Query hooks ────────────────────────────────────────────────────────────────
 
-export function useMyLeadProjects(date?: string) {
-  return useQuery({ queryKey: ['team-lead', 'projects', date ?? 'today'], queryFn: () => listMyLeadProjects(date) });
+export function useMyLeadProjects(date?: string, teamLeadId?: number | null) {
+  return useQuery({
+    queryKey: ['team-lead', 'projects', date ?? 'today', teamLeadId ?? null],
+    queryFn: () => listMyLeadProjects(date, teamLeadId),
+  });
 }
 
 export function useMyCategories() {

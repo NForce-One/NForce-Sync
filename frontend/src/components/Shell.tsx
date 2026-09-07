@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { Menu, X, Search, Bell, LogOut, Sun, Moon, UserCircle2, HelpCircle, Shield, FolderKanban } from 'lucide-react';
+import { Menu, X, Search, Bell, LogOut, Sun, Moon, UserCircle2, HelpCircle, Shield, FolderKanban, ChevronDown } from 'lucide-react';
 import { BrandMark } from './BrandMark';
-import { NAV, ROLE_COLORS, ROLE_LABELS, getNavPaths, getNavItem, navSubItemPath } from '../lib/nav';
+import { NAV, ROLE_COLORS, ROLE_LABELS, getNavPaths, getNavItem, navSubItemPath, isNavGroup } from '../lib/nav';
 import type { NavItem } from '../lib/nav';
 import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
@@ -89,16 +89,24 @@ function WorkspaceSearch() {
   const searchableEntries = useMemo<SearchableNavEntry[]>(() => {
     const entries: SearchableNavEntry[] = [];
     for (const section of NAV[role]) {
-      for (const item of section.items) {
-        entries.push({ key: item.key, label: item.label, path: item.path, icon: item.icon });
-        for (const sub of item.subItems ?? []) {
+      for (const entry of section.items) {
+        // A group's children are searchable individually (with the group as parentLabel); the
+        // group itself has no path of its own, so it isn't a navigable search result.
+        const items = isNavGroup(entry) ? entry.children : [entry];
+        for (const item of items) {
           entries.push({
-            key: `${item.key}:${sub.key}`,
-            label: sub.label,
-            path: navSubItemPath(item, sub),
-            icon: item.icon,
-            parentLabel: item.label,
+            key: item.key, label: item.label, path: item.path, icon: item.icon,
+            parentLabel: isNavGroup(entry) ? entry.label : undefined,
           });
+          for (const sub of item.subItems ?? []) {
+            entries.push({
+              key: `${item.key}:${sub.key}`,
+              label: sub.label,
+              path: navSubItemPath(item, sub),
+              icon: item.icon,
+              parentLabel: item.label,
+            });
+          }
         }
       }
     }
@@ -346,6 +354,136 @@ function WorkspaceSearch() {
 // ─── Sidebar content (shared desktop + mobile) ────────────────────────────────
 // All colors hardcoded dark — sidebar NEVER themes regardless of html data-theme.
 
+/** One sidebar row for a routable NavItem — shared by top-level items and a NavGroup's
+ *  (indented) children, so the two look and behave identically apart from indentation. */
+function NavLinkItem({ item, isActive, badge, indent, onNavClick }: {
+  item: NavItem; isActive: boolean; badge: number | undefined; indent?: boolean;
+  onNavClick?: () => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <Link
+      to={item.path}
+      className="nf-sidebar-item"
+      aria-current={isActive ? 'page' : undefined}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        padding: '9px 11px',
+        margin: indent ? '1px 8px 1px 22px' : '1px 8px',
+        borderRadius: 6,
+        textDecoration: 'none',
+        position: 'relative',
+        fontSize: 13,
+        fontWeight: 450,
+      }}
+      onClick={onNavClick}
+    >
+      {isActive && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: -8,
+            top: 6,
+            bottom: 6,
+            width: 3,
+            background: '#E4373D',
+            borderRadius: '0 3px 3px 0',
+          }}
+        />
+      )}
+
+      <Icon size={indent ? 15 : 17} style={{ flex: 'none', opacity: isActive ? 1 : 0.8 }} aria-hidden="true" />
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {item.label}
+      </span>
+
+      {badge !== undefined && badge > 0 && (
+        <span
+          aria-label={`${badge} unread`}
+          style={{
+            background: '#B11116',
+            color: '#fff',
+            fontSize: 10,
+            fontWeight: 600,
+            lineHeight: 1,
+            padding: '2px 5px',
+            borderRadius: 10,
+            fontFamily: '"JetBrains Mono", monospace',
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}
+        >
+          {badge}
+        </span>
+      )}
+
+      {item.phase !== undefined && (
+        <span
+          title={`Ships in phase ${item.phase}`}
+          style={{
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            color: '#6B7280',
+            background: '#262A32',
+            padding: '2px 5px',
+            borderRadius: 4,
+            flexShrink: 0,
+          }}
+        >
+          P{item.phase}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/** An expandable "Project Manager Views" / "Team Lead Views"-style parent row — a button, not a
+ *  Link (it has no page of its own), with a chevron that rotates to reflect expanded/collapsed
+ *  state. Its own active-state isn't tracked here; each child highlights itself when active. */
+function NavGroupRow({ label, icon: Icon, expanded, onToggle }: {
+  label: string; icon: NavItem['icon']; expanded: boolean; onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="nf-sidebar-item"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        width: 'calc(100% - 16px)',
+        padding: '9px 11px',
+        margin: '1px 8px',
+        borderRadius: 6,
+        border: 'none',
+        background: 'transparent',
+        cursor: 'pointer',
+        fontSize: 13,
+        fontWeight: 450,
+        textAlign: 'left',
+        color: 'inherit',
+        font: 'inherit',
+      }}
+    >
+      <Icon size={17} style={{ flex: 'none', opacity: 0.8 }} aria-hidden="true" />
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <ChevronDown
+        size={15}
+        aria-hidden="true"
+        style={{ flex: 'none', opacity: 0.8, transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+      />
+    </button>
+  );
+}
+
 function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
   const { user } = useAuth();
   const photo = useProfilePhoto();
@@ -353,6 +491,25 @@ function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
 
   const role = user!.role;
   const navSections = NAV[role];
+
+  // Expand/collapse state for NavGroups (e.g. Super Admin's "Project Manager Views" / "Team
+  // Lead Views") — local to this mounted Shell, so it resets naturally on logout/login (the
+  // whole shell unmounts) without needing to explicitly clear anything. Auto-expands (below)
+  // whenever the active route is one of a group's children, but never auto-collapses a group
+  // the user opened manually, and each group's state is independent of every other group's.
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    for (const section of navSections) {
+      for (const entry of section.items) {
+        if (isNavGroup(entry) && entry.children.some(c => c.path === location.pathname)) {
+          setExpandedGroups(prev => (prev[entry.key] ? prev : { ...prev, [entry.key]: true }));
+        }
+      }
+    }
+  }, [location.pathname, navSections]);
+  function toggleGroup(key: string) {
+    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  }
 
   // Sidebar Approvals badge, the Team Dashboard "Pending Approval" KPI, and the
   // Approvals page count all read this same live query — see api/approvals.ts.
@@ -442,96 +599,51 @@ function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
               {section.section}
             </div>
 
-            {section.items.map((item) => {
-              const isActive = location.pathname === item.path;
-              const Icon = item.icon;
-              const badge = (role === 'lead' || role === 'pm') && item.key === 'approvals'
-                ? pendingApprovalsCount
-                : item.key === 'notifications'
-                  ? unreadNotificationsCount
-                  : role === 'lead' && item.key === 'blockers'
-                    ? openBlockersCount
-                    : role === 'pm' && item.key === 'blockers'
-                      ? pmOpenBlockersCount
-                      : item.badge;
-              return (
-                <Link
-                  key={item.key}
-                  to={item.path}
-                  className="nf-sidebar-item"
-                  aria-current={isActive ? 'page' : undefined}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 9,
-                    padding: '9px 11px',
-                    margin: '1px 8px',
-                    borderRadius: 6,
-                    textDecoration: 'none',
-                    position: 'relative',
-                    fontSize: 13,
-                    fontWeight: 450,
-                  }}
-                  onClick={onNavClick}
-                >
-                  {isActive && (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        position: 'absolute',
-                        left: -8,
-                        top: 6,
-                        bottom: 6,
-                        width: 3,
-                        background: '#E4373D',
-                        borderRadius: '0 3px 3px 0',
-                      }}
+            {section.items.map((entry) => {
+              function badgeFor(item: NavItem): number | undefined {
+                return (role === 'lead' || role === 'pm') && item.key === 'approvals'
+                  ? pendingApprovalsCount
+                  : item.key === 'notifications'
+                    ? unreadNotificationsCount
+                    : role === 'lead' && item.key === 'blockers'
+                      ? openBlockersCount
+                      : role === 'pm' && item.key === 'blockers'
+                        ? pmOpenBlockersCount
+                        : item.badge;
+              }
+
+              if (isNavGroup(entry)) {
+                const expanded = !!expandedGroups[entry.key];
+                return (
+                  <div key={entry.key}>
+                    <NavGroupRow
+                      label={entry.label}
+                      icon={entry.icon}
+                      expanded={expanded}
+                      onToggle={() => toggleGroup(entry.key)}
                     />
-                  )}
+                    {expanded && entry.children.map(child => (
+                      <NavLinkItem
+                        key={child.key}
+                        item={child}
+                        isActive={location.pathname === child.path}
+                        badge={badgeFor(child)}
+                        indent
+                        onNavClick={onNavClick}
+                      />
+                    ))}
+                  </div>
+                );
+              }
 
-                  <Icon size={17} style={{ flex: 'none', opacity: isActive ? 1 : 0.8 }} aria-hidden="true" />
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {item.label}
-                  </span>
-
-                  {badge !== undefined && badge > 0 && (
-                    <span
-                      aria-label={`${badge} unread`}
-                      style={{
-                        background: '#B11116',
-                        color: '#fff',
-                        fontSize: 10,
-                        fontWeight: 600,
-                        lineHeight: 1,
-                        padding: '2px 5px',
-                        borderRadius: 10,
-                        fontFamily: '"JetBrains Mono", monospace',
-                        fontVariantNumeric: 'tabular-nums',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {badge}
-                    </span>
-                  )}
-
-                  {item.phase !== undefined && (
-                    <span
-                      title={`Ships in phase ${item.phase}`}
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 600,
-                        letterSpacing: '0.06em',
-                        color: '#6B7280',
-                        background: '#262A32',
-                        padding: '2px 5px',
-                        borderRadius: 4,
-                        flexShrink: 0,
-                      }}
-                    >
-                      P{item.phase}
-                    </span>
-                  )}
-                </Link>
+              return (
+                <NavLinkItem
+                  key={entry.key}
+                  item={entry}
+                  isActive={location.pathname === entry.path}
+                  badge={badgeFor(entry)}
+                  onNavClick={onNavClick}
+                />
               );
             })}
           </div>

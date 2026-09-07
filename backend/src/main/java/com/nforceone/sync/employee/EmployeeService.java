@@ -65,15 +65,23 @@ public class EmployeeService {
         LocalDate weekStart = today.with(DayOfWeek.MONDAY);
         LocalDate monthStart = today.withDayOfMonth(1);
 
+        // Week and month ranges overlap (weekStart can fall before OR after monthStart,
+        // depending on where in the month "today" is) — fetched as one covering range in a
+        // single query instead of two separate round trips, then split in memory.
+        LocalDate rangeStart = weekStart.isBefore(monthStart) ? weekStart : monthStart;
+        List<UtilSnapshotDto> rangeSnaps = utilizationService.getForEmployee(employeeId, rangeStart, today);
+
         // Week approved hours from snapshots Mon–today
-        List<UtilSnapshotDto> weekSnaps = utilizationService.getForEmployee(employeeId, weekStart, today);
-        BigDecimal weekApprovedHours = weekSnaps.stream()
+        BigDecimal weekApprovedHours = rangeSnaps.stream()
+                .filter(s -> !s.snapshotDate().isBefore(weekStart))
                 .map(UtilSnapshotDto::approvedProductiveHours)
                 .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // Month avg util from snapshots (only days with available > 0)
-        List<UtilSnapshotDto> monthSnaps = utilizationService.getForEmployee(employeeId, monthStart, today);
+        List<UtilSnapshotDto> monthSnaps = rangeSnaps.stream()
+                .filter(s -> !s.snapshotDate().isBefore(monthStart))
+                .toList();
         BigDecimal monthAvgUtil = computeAvgUtil(monthSnaps);
 
         // Streak: consecutive approved weekdays going back from today
@@ -159,7 +167,19 @@ public class EmployeeService {
         return shiftRepository.findById(shiftId).orElse(null);
     }
 
+    // Batches the whole lookback window into one query instead of one query per day walked —
+    // the loop below can walk up to 90 days backward (each iteration moves the cursor back by
+    // exactly one calendar day, whether skipping a weekend or checking a weekday), so a 100-day
+    // window covers the full walk with margin. This was previously the dominant contributor to
+    // the Employee Dashboard's load time: a long approved streak issued dozens of sequential
+    // single-row DB round trips inside the one request that gates the dashboard's skeleton.
     private int computeStreak(Long employeeId, LocalDate today) {
+        LocalDate lookback = today.minusDays(100);
+        Map<LocalDate, EodEntry.Status> statusByDate = entryRepository
+                .findByEmployeeIdAndEntryDateBetweenOrderByEntryDateDesc(employeeId, lookback, today)
+                .stream()
+                .collect(Collectors.toMap(EodEntry::getEntryDate, EodEntry::getStatus, (a, b) -> a));
+
         int streak = 0;
         LocalDate cursor = isWeekend(today) ? previousWeekday(today) : today;
         for (int i = 0; i < 90; i++) {
@@ -167,8 +187,7 @@ public class EmployeeService {
                 cursor = previousWeekday(cursor);
                 continue;
             }
-            Optional<EodEntry> entry = entryRepository.findByEmployeeIdAndEntryDate(employeeId, cursor);
-            if (entry.isPresent() && entry.get().getStatus() == EodEntry.Status.APPROVED) {
+            if (statusByDate.get(cursor) == EodEntry.Status.APPROVED) {
                 streak++;
                 cursor = cursor.minusDays(1);
             } else {

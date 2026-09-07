@@ -83,8 +83,12 @@ public class ProjectDashboardService {
     }
 
     public ProjectDashboardFiltersDto getFilters(String actingEmail) {
+        return getFilters(actingEmail, null);
+    }
+
+    public ProjectDashboardFiltersDto getFilters(String actingEmail, Long pmId) {
         AppUser pm = requirePm(actingEmail);
-        List<Project> projects = scopedProjects(pm);
+        List<Project> projects = scopedProjects(pm, pmId);
         List<Long> projectIds = projects.stream().map(Project::getId).toList();
 
         List<ProjectOptionDto> projectOptions = projects.stream()
@@ -127,12 +131,18 @@ public class ProjectDashboardService {
     public ProjectDashboardSummaryDto getSummary(String actingEmail, LocalDate from, LocalDate to,
                                                   Long projectId, Long employeeId, Long teamManagerId,
                                                   String client) {
+        return getSummary(actingEmail, from, to, projectId, employeeId, teamManagerId, client, null);
+    }
+
+    public ProjectDashboardSummaryDto getSummary(String actingEmail, LocalDate from, LocalDate to,
+                                                  Long projectId, Long employeeId, Long teamManagerId,
+                                                  String client, Long pmId) {
         if (to.isBefore(from)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "'to' cannot be before 'from'");
         }
 
         AppUser pm = requirePm(actingEmail);
-        List<Project> projects = scopedProjects(pm);
+        List<Project> projects = scopedProjects(pm, pmId);
 
         if (projectId != null) {
             Project match = projects.stream().filter(p -> p.getId().equals(projectId)).findFirst()
@@ -477,7 +487,19 @@ public class ProjectDashboardService {
     }
 
     private List<Project> scopedProjects(AppUser pm) {
+        return scopedProjects(pm, null);
+    }
+
+    /**
+     * {@code pmId} lets a Super Admin narrow the system-wide project list to one specific
+     * Project Manager's portfolio (Super Admin Reportee Views enhancement) — ignored for a
+     * non-SUPERADMIN caller, who always stays scoped to their own id regardless of what's passed.
+     */
+    private List<Project> scopedProjects(AppUser pm, Long pmId) {
         if (pm.getRole() == AppUser.Role.SUPERADMIN) {
+            if (pmId != null) {
+                return projectRepository.findByProjectManagerIdOrderByNameAsc(pmId);
+            }
             return projectRepository.findAllWithPmOrderByNameAsc();
         }
         return projectRepository.findByProjectManagerIdOrderByNameAsc(pm.getId());

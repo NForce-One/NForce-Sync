@@ -58,7 +58,7 @@ const tdStyle: React.CSSProperties = {
   color: 'var(--txt)',
 };
 
-type Tab = 'projects' | 'allocation';
+export type Tab = 'projects' | 'allocation';
 
 const STATUS_CFG: Record<string, { color: string; label: string }> = {
   ACTIVE:    { color: '#2FB67C', label: 'Active' },
@@ -156,11 +156,14 @@ function IconButton({ icon, label, danger, onClick, disabled }: {
   );
 }
 
-function Toolbar({ count, noun, onRefetch, isRefreshing, onAdd, addLabel, filters }: {
+function Toolbar({ count, noun, onRefetch, isRefreshing, onAdd, addLabel, filters, hideAdd }: {
   count: number | undefined; noun: string; onRefetch: () => void; isRefreshing?: boolean;
   onAdd: () => void; addLabel: string;
   /** Optional filter controls, rendered in the left group after the count. */
   filters?: React.ReactNode;
+  /** Super Admin Reportee Views are read-only — hides the "New X" affordance without touching
+   *  the PM's own page, which never sets this. */
+  hideAdd?: boolean;
 }) {
   return (
     <div style={{
@@ -192,16 +195,18 @@ function Toolbar({ count, noun, onRefetch, isRefreshing, onAdd, addLabel, filter
         >
           <RefreshCw size={14} aria-hidden="true" style={isRefreshing ? { animation: 'spin 1s linear infinite' } : undefined} />
         </button>
-        <button
-          onClick={onAdd}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '7px 14px', background: 'var(--brand)', border: 'none',
-            borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          <Plus size={14} aria-hidden="true" /> {addLabel}
-        </button>
+        {!hideAdd && (
+          <button
+            onClick={onAdd}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', background: 'var(--brand)', border: 'none',
+              borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            <Plus size={14} aria-hidden="true" /> {addLabel}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -702,13 +707,18 @@ function ProjectModal({ open, onClose, editing }: {
 
 // ── Projects tab ───────────────────────────────────────────────────────────────
 
-function ProjectsTab() {
+// `showPmFilter` adds a client-side "Filter by Project Manager" dropdown — only shown in the
+// Super Admin Reportee Views context (see readOnly, which is only ever true there); PM's own
+// "Projects & Allocation" page is unaffected, since a PM viewing their own portfolio doesn't
+// need to filter it by which PM it belongs to.
+function ProjectsTab({ readOnly = false, showPmFilter = false }: { readOnly?: boolean; showPmFilter?: boolean }) {
   const { data, isPending, isError, isFetching, refetch } = useAllProjects();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProjectFullDto | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [leadFilter, setLeadFilter] = useState('');
+  const [pmFilter, setPmFilter] = useState('');
 
   // Only the free-text box is debounced; the selects apply immediately.
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -718,9 +728,21 @@ function ProjectsTab() {
     return (data ?? []).filter(p =>
       (term === '' || p.name.toLowerCase().includes(term))
       && (statusFilter === '' || p.status === statusFilter)
-      && (leadFilter === '' || String(p.pmId) === leadFilter),
+      && (leadFilter === '' || String(p.pmId) === leadFilter)
+      && (pmFilter === '' || String(p.projectManagerId) === pmFilter),
     );
-  }, [data, debouncedSearch, statusFilter, leadFilter]);
+  }, [data, debouncedSearch, statusFilter, leadFilter, pmFilter]);
+
+  // Project Manager options, same derivation as leadOptions below but keyed off projectManagerId.
+  const pmOptions = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const p of data ?? []) {
+      if (p.projectManagerId != null) byId.set(p.projectManagerId, p.projectManagerName ?? `#${p.projectManagerId}`);
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [data]);
 
   // Team Lead options come from the leads actually holding a project, not the full assignable
   // list — filtering by someone with no projects would only ever yield an empty table.
@@ -735,14 +757,15 @@ function ProjectsTab() {
   }, [data]);
 
   // Drives the empty-state wording, so it tracks the debounced term the list was actually filtered by.
-  const filtersActive = debouncedSearch.trim() !== '' || statusFilter !== '' || leadFilter !== '';
+  const filtersActive = debouncedSearch.trim() !== '' || statusFilter !== '' || leadFilter !== '' || pmFilter !== '';
   // Drives the Clear button, which must appear the moment you type rather than 300ms later.
-  const anyFilterSet = search !== '' || statusFilter !== '' || leadFilter !== '';
+  const anyFilterSet = search !== '' || statusFilter !== '' || leadFilter !== '' || pmFilter !== '';
 
   function clearFilters() {
     setSearch('');
     setStatusFilter('');
     setLeadFilter('');
+    setPmFilter('');
   }
 
   function openCreate() { setEditing(null); setModalOpen(true); }
@@ -788,8 +811,21 @@ function ProjectsTab() {
           <option key={l.id} value={String(l.id)}>{l.name}</option>
         ))}
       </select>
-      {/* Resets all three at once — with search, status and Team Lead set, clearing them one by one
-          is three interactions. Only rendered while something is actually filtered. */}
+      {showPmFilter && (
+        <select
+          value={pmFilter}
+          onChange={e => setPmFilter(e.target.value)}
+          aria-label="Filter by Project Manager"
+          style={{ ...inputStyle, width: 190, fontWeight: 400 }}
+        >
+          <option value="">Filter by Project Manager</option>
+          {pmOptions.map(p => (
+            <option key={p.id} value={String(p.id)}>{p.name}</option>
+          ))}
+        </select>
+      )}
+      {/* Resets all filters at once — clearing them one by one is several interactions. Only
+          rendered while something is actually filtered. */}
       {anyFilterSet && (
         <button
           type="button"
@@ -812,7 +848,7 @@ function ProjectsTab() {
   return (
     <div style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
       <Toolbar count={data ? filtered.length : undefined} noun="project" onRefetch={() => refetch()}
-        isRefreshing={isFetching} onAdd={openCreate} addLabel="New Project" filters={projectFilters} />
+        isRefreshing={isFetching} onAdd={openCreate} addLabel="New Project" filters={projectFilters} hideAdd={readOnly} />
 
       {isPending && (
         <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -889,7 +925,9 @@ function ProjectsTab() {
                   <td style={tdStyle}>{p.allocatedHeadcount}</td>
                   <td style={tdStyle}><StatusBadge status={p.status} /></td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    <IconButton icon={<Pencil size={13} aria-hidden="true" />} label="Edit" onClick={() => openEdit(p)} />
+                    {!readOnly && (
+                      <IconButton icon={<Pencil size={13} aria-hidden="true" />} label="Edit" onClick={() => openEdit(p)} />
+                    )}
                   </td>
                 </tr>
               ))
@@ -1464,10 +1502,11 @@ function DeleteAllocationModal({ allocation, onClose }: { allocation: Allocation
 
 // ── Allocation tab ─────────────────────────────────────────────────────────────
 
-function AllocationTab() {
+export function AllocationTab({ readOnly = false, teamLeadId }: { readOnly?: boolean; teamLeadId?: number | null }) {
   const { data: projects } = useAllProjects();
   const [projectFilter, setProjectFilter] = useState('');
-  const { data, isPending, isError, isFetching, refetch } = useAllocations(projectFilter ? Number(projectFilter) : undefined);
+  const { data, isPending, isError, isFetching, refetch } = useAllocations(
+    projectFilter ? Number(projectFilter) : undefined, teamLeadId);
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [toEdit, setToEdit] = useState<AllocationDto | null>(null);
@@ -1562,16 +1601,18 @@ function AllocationTab() {
           >
             <RefreshCw size={14} aria-hidden="true" style={isFetching ? { animation: 'spin 1s linear infinite' } : undefined} />
           </button>
-          <button
-            onClick={() => setModalOpen(true)}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '7px 14px', background: 'var(--brand)', border: 'none',
-              borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            <Plus size={14} aria-hidden="true" /> New Allocation
-          </button>
+          {!readOnly && (
+            <button
+              onClick={() => setModalOpen(true)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px', background: 'var(--brand)', border: 'none',
+                borderRadius: 6, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              <Plus size={14} aria-hidden="true" /> New Allocation
+            </button>
+          )}
         </div>
       </div>
 
@@ -1629,10 +1670,12 @@ function AllocationTab() {
                   <td style={tdStyle}>{fmtDateDMY(a.effectiveFrom)}</td>
                   <td style={tdStyle}>{fmtDateDMY(a.effectiveTo)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <IconButton icon={<Pencil size={13} aria-hidden="true" />} label="Edit" onClick={() => setToEdit(a)} />
-                      <IconButton icon={<Trash2 size={13} aria-hidden="true" />} label="Remove" danger onClick={() => setToDelete(a)} />
-                    </div>
+                    {!readOnly && (
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <IconButton icon={<Pencil size={13} aria-hidden="true" />} label="Edit" onClick={() => setToEdit(a)} />
+                        <IconButton icon={<Trash2 size={13} aria-hidden="true" />} label="Remove" danger onClick={() => setToDelete(a)} />
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))
@@ -1651,8 +1694,8 @@ function AllocationTab() {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
-export default function ProjectsAllocation() {
-  const [tab, setTab] = useState<Tab>('projects');
+export default function ProjectsAllocation({ initialTab, readOnly = false }: { initialTab?: Tab; readOnly?: boolean } = {}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'projects');
 
   const tabs = useMemo(() => ([
     { key: 'projects' as const, label: 'Projects', icon: FolderKanban },
@@ -1692,7 +1735,7 @@ export default function ProjectsAllocation() {
         })}
       </div>
 
-      {tab === 'projects' ? <ProjectsTab /> : <AllocationTab />}
+      {tab === 'projects' ? <ProjectsTab readOnly={readOnly} showPmFilter={readOnly} /> : <AllocationTab readOnly={readOnly} />}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );

@@ -2,10 +2,10 @@ import { useState } from 'react';
 import LeadEodByEmployeeReport from './EodByEmployeeReport';
 import LeadMissingEodReport from './MissingEodReport';
 
-type Tab = 'eod' | 'missing';
+export type Tab = 'eod' | 'missing';
 
-export default function LeadReportsDashboard() {
-  const [tab, setTab] = useState<Tab>('eod');
+export default function LeadReportsDashboard({ initialTab }: { initialTab?: Tab } = {}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'eod');
 
   return (
     <div>

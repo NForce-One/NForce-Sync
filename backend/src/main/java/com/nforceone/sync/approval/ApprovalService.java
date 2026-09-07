@@ -77,7 +77,33 @@ public class ApprovalService {
     // findPendingByManagerId, unchanged — those are deliberately NOT date-scoped.
     @Transactional(readOnly = true)
     public List<EodEntryDto> getPendingForActor(String actorEmail, LocalDate from, LocalDate to) {
+        return getPendingForActor(actorEmail, from, to, null, null);
+    }
+
+    /**
+     * {@code pmId}/{@code managerId} let a Super Admin narrow read-only visibility to one
+     * specific Project Manager's or Team Lead's pending backlog (Super Admin Reportee Views
+     * enhancement) — honored ONLY when the actor is SUPERADMIN, so a PM/Team Lead cannot widen
+     * their own scope by supplying someone else's id. Omitting both for a Super Admin falls back
+     * to the full system-wide pending backlog across every PM/Team Lead.
+     */
+    @Transactional(readOnly = true)
+    public List<EodEntryDto> getPendingForActor(String actorEmail, LocalDate from, LocalDate to, Long pmId, Long managerId) {
         AppUser actor = requireUserByEmail(actorEmail);
+
+        if (actor.getRole() == AppUser.Role.SUPERADMIN) {
+            if (pmId != null) {
+                return enrichAll(entryRepository.findByProjectManagerIdAndStatus(pmId, EodEntry.Status.SUBMITTED));
+            }
+            if (managerId != null) {
+                List<EodEntry> entries = (from != null && to != null)
+                        ? entryRepository.findPendingByManagerIdAndEntryDateBetween(managerId, EodEntry.Status.SUBMITTED, from, to)
+                        : entryRepository.findPendingByManagerId(managerId, EodEntry.Status.SUBMITTED);
+                return enrichAll(entries);
+            }
+            return enrichAll(entryRepository.findAllByStatus(EodEntry.Status.SUBMITTED));
+        }
+
         if (actor.getRole() == AppUser.Role.PM) {
             List<EodEntry> entries = entryRepository.findByProjectManagerIdAndStatus(actor.getId(), EodEntry.Status.SUBMITTED);
             return enrichAll(entries);
@@ -99,7 +125,25 @@ public class ApprovalService {
      */
     @Transactional(readOnly = true)
     public List<EodEntryDto> getDecidedForActor(String actorEmail, EodEntry.Status status) {
+        return getDecidedForActor(actorEmail, status, null, null);
+    }
+
+    /** See {@link #getPendingForActor(String, LocalDate, LocalDate, Long, Long)} — same
+     *  SUPERADMIN-only pmId/managerId narrowing, applied to the Approved/Rejected tabs. */
+    @Transactional(readOnly = true)
+    public List<EodEntryDto> getDecidedForActor(String actorEmail, EodEntry.Status status, Long pmId, Long managerId) {
         AppUser actor = requireUserByEmail(actorEmail);
+
+        if (actor.getRole() == AppUser.Role.SUPERADMIN) {
+            if (pmId != null) {
+                return enrichAll(entryRepository.findByProjectManagerIdAndStatus(pmId, status));
+            }
+            if (managerId != null) {
+                return enrichAll(entryRepository.findDecidedByManagerId(managerId, status));
+            }
+            return enrichAll(entryRepository.findAllByStatus(status));
+        }
+
         if (actor.getRole() == AppUser.Role.PM) {
             // Deliberately NOT scoped to actions this PM personally took — a PM oversees every
             // team touching their projects, so Approved/Rejected must include entries a Team
