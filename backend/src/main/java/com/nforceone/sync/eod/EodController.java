@@ -1,15 +1,20 @@
 package com.nforceone.sync.eod;
 
 import com.nforceone.sync.eod.dto.BlockedTaskDto;
+import com.nforceone.sync.eod.dto.EodAttachmentDto;
 import com.nforceone.sync.eod.dto.EodDayDefaultsDto;
 import com.nforceone.sync.eod.dto.EodEntryDto;
 import com.nforceone.sync.eod.dto.SaveEodRequest;
 import com.nforceone.sync.eod.dto.TimeAdjustmentContextDto;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -19,9 +24,11 @@ import java.util.List;
 public class EodController {
 
     private final EodService eodService;
+    private final EodAttachmentService attachmentService;
 
-    public EodController(EodService eodService) {
+    public EodController(EodService eodService, EodAttachmentService attachmentService) {
         this.eodService = eodService;
+        this.attachmentService = attachmentService;
     }
 
     @PostMapping("/draft")
@@ -76,6 +83,38 @@ public class EodController {
     public EodDayDefaultsDto getDayDefaults(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return eodService.getDayDefaults(date, actingEmail());
+    }
+
+    /**
+     * Upload one supporting file to an EOD entry, optionally scoped to one of its task rows.
+     * `taskId` omitted/null = EOD-level attachment. Requires the entry to still be editable
+     * (DRAFT/REJECTED) and to belong to the caller — see EodAttachmentService.upload.
+     */
+    @PostMapping(value = "/{entryId}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public EodAttachmentDto uploadAttachment(
+            @PathVariable Long entryId,
+            @RequestParam(required = false) Long taskId,
+            @RequestParam MultipartFile file) {
+        return attachmentService.upload(entryId, taskId, file, actingEmail());
+    }
+
+    /** Removes an attachment before submission. Only the uploader, only while the entry is
+     *  still editable — see EodAttachmentService.delete. */
+    @DeleteMapping("/attachments/{attachmentId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteAttachment(@PathVariable Long attachmentId) {
+        attachmentService.delete(attachmentId, actingEmail());
+    }
+
+    /** Downloads one attachment's raw bytes. Authorization mirrors reading the entry itself —
+     *  the entry's own employee, or a manager-tier role — never a public/unauthenticated URL. */
+    @GetMapping("/attachments/{attachmentId}")
+    public ResponseEntity<byte[]> downloadAttachment(@PathVariable Long attachmentId) {
+        EodAttachment attachment = attachmentService.requireForDownload(attachmentId, actingEmail());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(attachment.getContentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + attachment.getOriginalFileName() + "\"")
+                .body(attachment.getData());
     }
 
     private String actingEmail() {

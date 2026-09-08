@@ -239,6 +239,13 @@ textarea:-webkit-autofill:focus {
 }
 
 /* ─── Scrollbar ────────────────────────────────────────────────── */
+* {
+  /* Firefox has no ::-webkit-scrollbar-* support — this is its equivalent to the thin,
+     unobtrusive thumb/track below, so a scrollable region (e.g. a modal body) matches on
+     both engines instead of falling back to Firefox's default thick scrollbar. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) var(--panel);
+}
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -375,6 +382,12 @@ textarea:-webkit-autofill:focus {
 @keyframes nf-r-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ─── Upload progress bar — indeterminate state before the first real progress event ─── */
+@keyframes nf-r-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(240%); }
 }
 
 /* ═══ Responsive adaptation — tablet & mobile ═══════════════════════

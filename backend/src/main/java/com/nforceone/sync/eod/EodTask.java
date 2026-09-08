@@ -38,8 +38,13 @@ public class EodTask {
     @Column(precision = 5, scale = 2)
     private BigDecimal hours;
 
+    /**
+     * Null while a draft's task row has no status chosen yet (V75) — Save Draft skips full
+     * validation by design. {@link com.nforceone.sync.eod.EodService#validateLoggedDay} requires
+     * a real value before the entry may leave DRAFT.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(name = "task_status", nullable = false, length = 30)
+    @Column(name = "task_status", length = 30)
     private TaskStatus taskStatus;
 
     @Column(name = "blocker_reason", columnDefinition = "TEXT")

@@ -475,11 +475,21 @@ function DetailPanel({ b, range, onClose, readOnly = false }: { b: TeamBlockerDt
   const [confirmResolve, setConfirmResolve] = useState(false);
 
   return (
-    <Card style={{ padding: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--line)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+    // Capped to the viewport (minus the sticky topbar + the gap this panel sticks below — see
+    // its `top` offset where it's rendered) rather than `height: '100%'`: this panel's parent is
+    // a plain grid cell with no bounded height of its own, so `100%` resolved against nothing and
+    // let the whole card — and with it the Conversation thread below — grow to fit every message,
+    // pushing the reply box down and forcing the page itself to scroll. Capping it here instead
+    // means only the Conversation thread's own internal list scrolls (see BlockerThreadView).
+    <Card style={{ padding: 0, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 88px)', overflow: 'hidden' }}>
+      {/* Header spacing trimmed throughout (padding/margins/gap below) — this whole section is
+          fixed (flexShrink: 0, never part of the scrolling area), so every pixel saved here is a
+          pixel handed straight to the Conversation list's flex:1 below it, which is what actually
+          determines how many messages are visible without scrolling. */}
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Avatar name={b.employeeName} bg={avatarColor(b.employeeName)} size={38} />
+            <Avatar name={b.employeeName} bg={avatarColor(b.employeeName)} size={34} />
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--txt)' }}>{b.employeeName}</div>
@@ -513,20 +523,20 @@ function DetailPanel({ b, range, onClose, readOnly = false }: { b: TeamBlockerDt
           </div>
         </div>
 
-        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--txt)', marginBottom: 6 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--txt)', marginBottom: 4 }}>
           <span style={{ color: 'var(--txt-dim)', fontWeight: 600 }}>Category: </span>
           {b.categoryName ?? 'Blocked task'}
         </div>
-        <div style={{ fontSize: 13, color: 'var(--txt-mut)', lineHeight: 1.5, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, color: 'var(--txt-mut)', lineHeight: 1.4, marginBottom: 6 }}>
           <span style={{ color: 'var(--txt-dim)', fontWeight: 600 }}>Description: </span>
           {b.description || 'No description provided.'}
         </div>
-        <div style={{ fontSize: 13, color: 'var(--txt-mut)', lineHeight: 1.5, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--txt-mut)', lineHeight: 1.4, marginBottom: 10 }}>
           <span style={{ color: 'var(--txt-dim)', fontWeight: 600 }}>Reason: </span>
           {b.blockerReason ?? 'No detail provided.'}
         </div>
 
-        <div className="nf-r-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="nf-r-stack-sm" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <InfoField icon={<Folder size={14} aria-hidden="true" />} label="Project">
             {b.projectName ?? b.projectCode ?? '—'}
           </InfoField>
@@ -540,11 +550,14 @@ function DetailPanel({ b, range, onClose, readOnly = false }: { b: TeamBlockerDt
         </div>
       </div>
 
-      <div style={{ padding: '16px 20px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--txt)', marginBottom: 12, paddingBottom: 6, borderBottom: '2px solid var(--risk)', display: 'inline-block', flexShrink: 0 }}>
+      <div style={{ padding: '12px 20px 16px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--txt)', marginBottom: 8, paddingBottom: 4, borderBottom: '2px solid var(--risk)', display: 'inline-block', flexShrink: 0 }}>
           Conversation
         </div>
-        <div style={{ flex: 1, minHeight: 0 }}>
+        {/* display:flex is required here, not just flex:1 — BlockerThreadView's own root sizes
+            itself with `flex: 1` rather than a percentage height, which only resolves against a
+            flex (or grid) parent. See BlockerThreadView's root for the full explanation. */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <BlockerThreadView
             taskId={b.taskId}
             scope="lead"
@@ -961,7 +974,10 @@ export default function Blockers() {
       </div>
 
       {selectedBlocker && (
-        <div style={{ position: 'sticky', top: 0 }}>
+        // top: 72 = the sticky topbar's 56px + a 16px gap, so this panel settles just below it
+        // rather than butting up against it — DetailPanel's own maxHeight (100vh - 88px) leaves
+        // the matching 16px of breathing room below.
+        <div style={{ position: 'sticky', top: 72 }}>
           <DetailPanel b={selectedBlocker} range={range} onClose={() => setSelectedTaskId(null)} readOnly={isSuperAdmin} />
         </div>
       )}

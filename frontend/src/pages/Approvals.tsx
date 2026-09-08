@@ -206,6 +206,14 @@ export default function Approvals() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [detailsEntryId, setDetailsEntryId] = useState<number | null>(null);
 
+  // A `?highlight=` link — the Team Status table's "Pending" click, or an "EOD submitted"
+  // notification — means "go straight to this one": EntryRow's own effect scrolls/highlights the
+  // row, and this opens its detail modal directly so the full task/attachment view a notification
+  // promised doesn't need a second click to find and open the row by hand.
+  useEffect(() => {
+    if (highlightId != null) setDetailsEntryId(highlightId);
+  }, [highlightId]);
+
   const modalApprove = useApprove();
 
   const isLoading = pendingLoading

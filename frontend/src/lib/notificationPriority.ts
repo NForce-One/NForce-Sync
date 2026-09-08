@@ -63,7 +63,7 @@ const BASE_PRIORITY_BY_TYPE: Record<string, NotificationPriority> = {
 
   // ── Low — informational ─────────────────────────────────────────────────
   EOD_APPROVED: 'Low',             // emitted today (ApprovalService.approveEntry)
-  EOD_SUBMITTED: 'Low',            // not yet emitted
+  EOD_SUBMITTED: 'Low',            // emitted today (EodService.submit, to the employee's manager)
   HOLIDAY_ANNOUNCEMENT: 'Low',     // not yet emitted
   SYSTEM_ANNOUNCEMENT: 'Low',      // not yet emitted
   SYSTEM_MAINTENANCE: 'Low',       // not yet emitted

@@ -1,15 +1,29 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Paperclip, Smile, AtSign, Eye, Search, File as FileIcon, X, Download } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Paperclip, Smile, AtSign, Eye, Search, File as FileIcon, X, Download, AlertCircle } from 'lucide-react';
 import {
   useBlockerThread, useSendBlockerReply, useBlockerAttachmentUrl,
   type BlockerAttachmentDto, type BlockerReplyDto, type ConversationScope,
 } from '../api/blockerConversation';
 import type { DateRange } from '../api/teamLead';
+import { useToast } from '../lib/toast';
+
+/** Matches the extractError helper duplicated in SubmitEOD.tsx / approvals/shared.tsx. */
+function extractError(err: unknown): string {
+  const e = err as { response?: { data?: { error?: string; message?: string } } };
+  return e?.response?.data?.error ?? e?.response?.data?.message ?? 'Failed to send reply. Please try again.';
+}
 
 // Kept in sync with BlockerConversationService's server-side limits — the server is the
 // real guarantee, this is just for immediate feedback before a doomed upload is attempted.
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_REPLY = 4;
+// Kept in sync with BlockerConversationService.ALLOWED_CONTENT_TYPES. Images only — chosen to
+// match what the server actually accepts, not the other way around.
+const ALLOWED_ATTACHMENT_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const ALLOWED_ATTACHMENT_TYPES_LABEL = 'PNG, JPG/JPEG, or WEBP';
+/** Passed to the file input's `accept` so the OS picker itself filters — a courtesy, not the
+ *  guarantee: browsers only enforce `accept` loosely, so handleFilesSelected re-checks `file.type`. */
+const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
 
 function fmtFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -104,10 +118,13 @@ function ConversationMessage({ m, scope }: { m: BlockerReplyDto; scope: Conversa
   const isTeamLead = m.senderRole === 'TEAM_LEAD';
   const { date, time } = fmtDateTimeParts(m.createdAt);
   return (
-    <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-      <Avatar name={m.senderName} bg={isTeamLead ? TL_AVATAR_BG : avatarColor(m.senderName)} size={28} />
+    // Spacing here (gap/margins/avatar size/bubble padding) trimmed slightly from the original —
+    // each message this shaves a few px off directly buys back room for more of the thread to be
+    // visible at once above the reply box, without needing to scroll immediately.
+    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+      <Avatar name={m.senderName} bg={isTeamLead ? TL_AVATAR_BG : avatarColor(m.senderName)} size={24} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--txt)' }}>
             {m.senderName} <span style={{ fontWeight: 400, color: 'var(--txt-dim)' }}>({isTeamLead ? 'Team Lead' : 'Employee'})</span>
           </span>
@@ -115,7 +132,7 @@ function ConversationMessage({ m, scope }: { m: BlockerReplyDto; scope: Conversa
         </div>
         {m.message && (
           <div style={{
-            fontSize: 12.5, color: 'var(--txt-mut)', lineHeight: 1.5, padding: '8px 12px', borderRadius: 8,
+            fontSize: 12.5, color: 'var(--txt-mut)', lineHeight: 1.4, padding: '6px 10px', borderRadius: 8,
             background: isTeamLead ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'var(--raised2)',
             border: `1px solid ${isTeamLead ? 'color-mix(in srgb, var(--ok) 22%, transparent)' : 'var(--line2)'}`,
             marginBottom: m.attachments.length ? 6 : 0,
@@ -149,11 +166,29 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
 }) {
   const { data: messages, isPending } = useBlockerThread(taskId, scope);
   const sendReply = useSendBlockerReply(taskId, scope, range);
+  const { show: toast } = useToast();
   const [draft, setDraft] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  // Tracks the message count already scrolled to, so this only fires on a genuine change (the
+  // panel's first load, or a new reply landing) — not on every unrelated re-render.
+  const scrolledCountRef = useRef(0);
+
+  // Auto-scroll to the newest message: on first open (0 → N) and whenever a reply is sent or
+  // received (N → N+1). Jumps straight there rather than animating — this is a "where the
+  // conversation already is", not a moment worth drawing attention to with a scroll animation.
+  useEffect(() => {
+    const count = messages?.length ?? 0;
+    if (count > 0 && count !== scrolledCountRef.current) {
+      const el = messageListRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+    scrolledCountRef.current = count;
+  }, [messages]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -167,13 +202,26 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
   }, [messages]);
   const mentionResults = participants.filter(n => n.toLowerCase().includes(mentionQuery.trim().toLowerCase()));
 
-  function handleSend() {
-    if (isLocked) return;
-    const text = draft.trim();
-    if (!text) return;
-    sendReply.mutate({ message: text, files: pendingFiles });
-    setDraft('');
-    setPendingFiles([]);
+  // A reply needs a message OR at least one attachment — not necessarily both (mirrors the
+  // relaxed server-side check in BlockerConversationService.saveReply).
+  const canSend = draft.trim().length > 0 || pendingFiles.length > 0;
+
+  async function handleSend() {
+    if (isLocked || !canSend) return;
+    setSendError(null);
+    try {
+      await sendReply.mutateAsync({ message: draft.trim(), files: pendingFiles });
+      // Only clear the compose box once the server has actually accepted the reply — clearing
+      // unconditionally right after firing the request used to silently discard the draft and
+      // attachments on any failure (network error, validation rejection, etc.) with no way to
+      // recover them and no indication anything went wrong.
+      setDraft('');
+      setPendingFiles([]);
+    } catch (err) {
+      const msg = extractError(err);
+      setSendError(msg);
+      toast(msg, 'error');
+    }
   }
 
   function handleFilesSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -181,6 +229,14 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
     e.target.value = '';
     if (picked.length === 0) return;
 
+    // Checked first — a wrong-type file is worth naming on its own rather than folding into a
+    // generic failure, and `accept` on the input is only advisory (drag-and-drop and some OS
+    // pickers ignore it), so this is the real gate.
+    const unsupported = picked.find(f => !ALLOWED_ATTACHMENT_TYPES.includes(f.type));
+    if (unsupported) {
+      setAttachError(`"${unsupported.name}" is not a supported file type. Only ${ALLOWED_ATTACHMENT_TYPES_LABEL} images can be attached.`);
+      return;
+    }
     const combined = [...pendingFiles, ...picked];
     if (combined.length > MAX_ATTACHMENTS_PER_REPLY) {
       setAttachError(`You can attach up to ${MAX_ATTACHMENTS_PER_REPLY} files per reply`);
@@ -213,8 +269,16 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+    // `flex: 1` (filling whatever height the flex-column parent gives this), NOT `height: '100%'`:
+    // a percentage height only resolves against a parent whose OWN height is "definite" per spec,
+    // and a flex item's height coming from the flex algorithm doesn't reliably count as definite
+    // for a plain block child's `height: 100%` — in practice this measured as the full unclamped
+    // content height, defeating the internal scroll below and pushing the reply box out of view.
+    // `flex: 1` sidesteps the percentage-resolution question entirely (this only works because
+    // the immediate parent is itself `display: flex` — see the two call sites in Blockers.tsx /
+    // MyBlockers.tsx).
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div ref={messageListRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {isPending ? (
           <div style={{ fontSize: 12.5, color: 'var(--txt-dim)' }}>Loading conversation…</div>
         ) : (messages ?? []).length === 0 ? (
@@ -260,14 +324,26 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
         {attachError && (
           <div style={{ fontSize: 11.5, color: 'var(--risk)', marginBottom: 6 }}>{attachError}</div>
         )}
+        {sendError && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--risk)', marginBottom: 6,
+          }}>
+            <AlertCircle size={12} aria-hidden="true" style={{ flexShrink: 0 }} />
+            {sendError}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); setSendError(null); }}
           placeholder="Type your message..."
-          rows={3}
+          // Was rows={3} — that alone, plus this box's own padding/margins, left room for barely
+          // one message above it before this fix. 2 rows is still comfortable to type a couple of
+          // sentences into; anyone drafting more can already see and scroll what they've written
+          // (native textarea scrolling, unaffected by resize:none below).
+          rows={2}
           style={{
-            width: '100%', resize: 'none', padding: '10px 12px', borderRadius: '8px 8px 0 0', fontSize: 12.5,
+            width: '100%', resize: 'none', padding: '8px 12px', borderRadius: '8px 8px 0 0', fontSize: 12.5,
             background: 'var(--raised2)', border: '1px solid var(--line2)', borderBottom: 'none', color: 'var(--txt)',
             fontFamily: 'inherit', display: 'block',
           }}
@@ -283,6 +359,7 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
               ref={fileInputRef}
               type="file"
               multiple
+              accept={ATTACHMENT_ACCEPT}
               onChange={handleFilesSelected}
               style={{ display: 'none' }}
             />
@@ -290,7 +367,7 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
               type="button"
               onClick={() => fileInputRef.current?.click()}
               aria-label="Attach file"
-              title={`Attach a file (up to ${MAX_ATTACHMENTS_PER_REPLY}, 5 MB each)`}
+              title={`Attach an image (${ALLOWED_ATTACHMENT_TYPES_LABEL} — up to ${MAX_ATTACHMENTS_PER_REPLY}, 5 MB each)`}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28,
                 background: 'none', border: 'none', borderRadius: 6, color: 'inherit', cursor: 'pointer',
@@ -395,14 +472,14 @@ export function BlockerThreadView({ taskId, scope, replyToLabel, visibilityNote,
           </div>
           <button
             onClick={handleSend}
-            disabled={!draft.trim() || sendReply.isPending}
+            disabled={!canSend || sendReply.isPending}
             style={{
               padding: '8px 16px', fontSize: 12.5, fontWeight: 600, borderRadius: 8,
               background: 'var(--risk)', border: '1px solid var(--risk)', color: '#fff',
-              cursor: !draft.trim() ? 'default' : 'pointer', opacity: !draft.trim() ? 0.6 : 1,
+              cursor: !canSend ? 'default' : 'pointer', opacity: !canSend ? 0.6 : 1,
             }}
           >
-            Send Reply
+            {sendReply.isPending ? 'Sending…' : 'Send Reply'}
           </button>
         </div>
         </>

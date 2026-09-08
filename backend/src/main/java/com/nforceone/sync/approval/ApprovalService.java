@@ -8,6 +8,7 @@ import com.nforceone.sync.auth.AuditLog;
 import com.nforceone.sync.auth.AuditLogRepository;
 import com.nforceone.sync.businessrules.BusinessRuleConfig;
 import com.nforceone.sync.businessrules.BusinessRuleConfigRepository;
+import com.nforceone.sync.eod.EodAttachmentService;
 import com.nforceone.sync.eod.EodEntry;
 import com.nforceone.sync.eod.EodEntryRepository;
 import com.nforceone.sync.eod.EodTask;
@@ -47,6 +48,7 @@ public class ApprovalService {
     private final ObjectMapper           objectMapper;
     private final NotificationService    notificationService;
     private final BusinessRuleConfigRepository configRepository;
+    private final EodAttachmentService    attachmentService;
 
     public ApprovalService(EodEntryRepository entryRepository,
                            AppUserRepository userRepository,
@@ -55,7 +57,8 @@ public class ApprovalService {
                            UtilizationService utilizationService,
                            ObjectMapper objectMapper,
                            NotificationService notificationService,
-                           BusinessRuleConfigRepository configRepository) {
+                           BusinessRuleConfigRepository configRepository,
+                           EodAttachmentService attachmentService) {
         this.entryRepository     = entryRepository;
         this.userRepository      = userRepository;
         this.actionRepository    = actionRepository;
@@ -64,6 +67,7 @@ public class ApprovalService {
         this.objectMapper        = objectMapper;
         this.notificationService = notificationService;
         this.configRepository    = configRepository;
+        this.attachmentService   = attachmentService;
     }
 
     // from/to are both null or both present — enforced by the controller, which only forwards
@@ -234,9 +238,12 @@ public class ApprovalService {
                 .collect(Collectors.groupingBy(a -> a.getEodEntry().getId()));
 
         OffsetDateTime now = OffsetDateTime.now();
+        EodAttachmentService.AttachmentsByScope attachments = attachmentService.loadForEntries(entryIds);
         return entries.stream()
                 .map(e -> EodEntryDto.from(e, latestReviewerComment(actionsByEntry.get(e.getId())),
-                        enrich(e, actionsByEntry.getOrDefault(e.getId(), List.of()), slaHours, standardHours, now)))
+                        enrich(e, actionsByEntry.getOrDefault(e.getId(), List.of()), slaHours, standardHours, now),
+                        attachments.entryLevelByEntryId().getOrDefault(e.getId(), List.of()),
+                        attachments.byTaskId()))
                 .toList();
     }
 

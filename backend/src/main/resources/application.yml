@@ -40,9 +40,11 @@ spring:
 
   servlet:
     multipart:
-      # Blocker reply attachments: BlockerConversationService enforces 5 MB/file, 4
-      # files/reply — sized headroom here so Spring's own limit isn't hit first.
-      max-file-size: 5MB
+      # Sized for the larger of the two attachment features: EOD attachments cap at 10 MB/file
+      # (app.eod-attachment.max-file-size-bytes below); Blocker replies still enforce their own
+      # 5 MB/file, 4 files/reply. Headroom here just needs to be >= the largest of those so
+      # Spring's own limit is never hit before either feature's own validation runs.
+      max-file-size: 10MB
       max-request-size: 25MB
 
 server:
@@ -62,6 +64,21 @@ app:
     # from the deployed site links back to that site, one from local dev links to localhost.
     # Override per environment with FRONTEND_URL.
     allowed-origins: ${FRONTEND_URL:http://localhost:5173,https://nforce-sync-git-dev-nforce-one.vercel.app}
+  # EOD Supporting Attachments — change these to retune limits, no code change needed.
+  # Mirrored on the frontend in lib/eodAttachments.ts's own constants; keep both sides in sync.
+  eod-attachment:
+    max-file-size-bytes: 10485760      # 10 MB per file
+    max-attachments-per-entry: 10      # EOD-level cap
+    max-attachments-per-task: 5        # per-task cap
+    # App-wide circuit breaker on TOTAL bytes stored across every EOD attachment row (a plain
+    # bytea column — see EodAttachment.data), independent of the per-file/per-entry caps above,
+    # which only bound one upload at a time and do nothing to stop unbounded growth across every
+    # employee over months of use. 2 GB is a starting guess, not a measured quota: comfortably
+    # above what routine EOD attachment usage (occasional screenshots/PDFs, capped at 10 MB each)
+    # should accumulate even across a full team over months, while still acting as a real backstop
+    # protecting the shared Postgres instance from runaway growth. Re-tune from real usage once
+    # this has been live a while — see EodAttachmentService.assertStorageAvailable.
+    max-total-storage-bytes: 2147483648   # 2 GB
 
 resend:
   api-key: ${RESEND_API_KEY:}

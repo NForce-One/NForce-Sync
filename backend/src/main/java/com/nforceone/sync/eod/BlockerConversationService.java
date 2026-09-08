@@ -34,6 +34,9 @@ public class BlockerConversationService {
     // the frontend check is for immediate feedback, this one is the actual guarantee.
     private static final long MAX_ATTACHMENT_BYTES = 5L * 1024 * 1024;
     private static final int MAX_ATTACHMENTS_PER_REPLY = 4;
+    // Kept in sync with ALLOWED_ATTACHMENT_TYPES in BlockerThread.tsx — images only.
+    private static final java.util.Set<String> ALLOWED_CONTENT_TYPES =
+            java.util.Set.of("image/png", "image/jpeg", "image/webp");
 
     private final BlockerReplyRepository replyRepository;
     private final BlockerReplyAttachmentRepository attachmentRepository;
@@ -151,15 +154,30 @@ public class BlockerConversationService {
     }
 
     private BlockerReply saveReply(EodTask task, AppUser sender, String message, List<MultipartFile> files) {
-        if (message == null || message.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Message must not be blank");
-        }
         List<MultipartFile> attachments = files == null ? List.of() : files.stream().filter(f -> !f.isEmpty()).toList();
+        boolean hasMessage = message != null && !message.isBlank();
+        // A reply needs a message OR at least one attachment, not necessarily both — an
+        // attachment-only reply (e.g. a screenshot with no comment) is a valid use case, and the
+        // client's Send Reply button now allows it (see BlockerThread.tsx's `canSend`).
+        if (!hasMessage && attachments.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Reply must include a message or at least one attachment");
+        }
         if (attachments.size() > MAX_ATTACHMENTS_PER_REPLY) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "At most " + MAX_ATTACHMENTS_PER_REPLY + " attachments per reply");
         }
         for (MultipartFile file : attachments) {
+            // Checked before size — a wrong-type file is worth its own message rather than
+            // folding into a generic rejection. The browser-supplied contentType is advisory
+            // (an unset/spoofed type is possible), so an absent or unrecognized value is
+            // rejected the same as an explicitly disallowed one — never trusted through.
+            String contentType = file.getContentType();
+            if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType.toLowerCase(java.util.Locale.ROOT))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "\"" + file.getOriginalFilename() + "\" is not a supported file type. "
+                                + "Only PNG, JPG/JPEG, and WEBP images are allowed.");
+            }
             if (file.getSize() > MAX_ATTACHMENT_BYTES) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "\"" + file.getOriginalFilename() + "\" exceeds the 5 MB attachment limit");
@@ -169,7 +187,9 @@ public class BlockerConversationService {
         BlockerReply reply = new BlockerReply();
         reply.setTask(task);
         reply.setSender(sender);
-        reply.setMessage(message.trim());
+        // message_column is NOT NULL — an attachment-only reply (hasMessage false, caught above
+        // only when there's also no attachment) stores empty string rather than null.
+        reply.setMessage(hasMessage ? message.trim() : "");
         reply.setCreatedAt(OffsetDateTime.now());
         BlockerReply saved = replyRepository.save(reply);
 

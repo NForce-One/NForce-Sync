@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, AlertTriangle, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { Plus, Trash2, AlertTriangle, CheckCircle, Clock, XCircle, Paperclip, X, Loader2 } from 'lucide-react';
 import { useToast } from '../../lib/toast';
 import { useAuth } from '../../lib/auth';
 import { todayISO, formatDate, formatTime12h } from '../../lib/date';
 import { listProjects } from '../../api/projects';
 import { listTaskCategories } from '../../api/taskCategories';
-import { saveDraft, submitEntry, listEntries, getTimeAdjustmentContext, getDayDefaults } from '../../api/eod';
+import {
+  saveDraft, submitEntry, listEntries, getTimeAdjustmentContext, getDayDefaults,
+  uploadEodAttachment, deleteEodAttachment, getEodAttachmentDataUrl,
+} from '../../api/eod';
 import { DatePicker } from '../../components/DatePicker';
-import type { EodEntryDto, EodTaskDto } from '../../api/eod';
+import type { EodEntryDto, EodTaskDto, EodAttachmentDto } from '../../api/eod';
+import {
+  ALLOWED_ATTACHMENT_TYPES, MAX_ATTACHMENTS_PER_TASK,
+  fmtAttachmentSize, validateAttachmentFile, previewEodAttachment,
+} from '../../lib/eodAttachments';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +50,7 @@ const DAY_TYPES = [
   { value: 'LEAVE',       label: 'Leave' },
   { value: 'HOLIDAY',     label: 'Holiday' },
 ];
+
 
 /**
  * Reference cap for the live "x / y hrs" readout and instant client-side feedback.
@@ -106,9 +114,22 @@ function minutesToHm(mins: number): string {
  * Identifies a specific version of the server's entry for a date. Used to decide whether the
  * form still reflects what the server last said. `updatedAt` moves on every server-side change,
  * so a manager's reject produces a different signature and forces the form to re-populate.
+ *
+ * Compared as a parsed epoch millisecond, NOT the raw ISO string: the exact same instant comes
+ * back formatted two different ways depending on which endpoint returned it — e.g. the draft-save
+ * response's in-memory `OffsetDateTime.now()` serializes with the server's own zone offset and
+ * nanosecond-scale fractional digits, while a subsequent GET re-reads the same TIMESTAMPTZ column
+ * back from Postgres (which normalizes to UTC and microsecond precision), serializing as `...Z`
+ * with one fewer fractional digit. Comparing those two strings for equality treats a genuinely
+ * unchanged row as "different", which defeated this exact guard: the implicit draft-save that
+ * fires on a task's first-ever attachment upload triggered a refetch whose string didn't match,
+ * so the populate effect "helpfully" replaced the just-created task rows (fresh local IDs) out
+ * from under the upload that was about to attach to the old one — silently dropping it. Comparing
+ * epoch millis is immune to the formatting difference while still catching an actually later
+ * timestamp.
  */
 function entrySignature(date: string, entry?: EodEntryDto | null): string {
-  return entry ? `${date}|${entry.id}|${entry.status}|${entry.updatedAt}` : `${date}|none`;
+  return entry ? `${date}|${entry.id}|${entry.status}|${new Date(entry.updatedAt).getTime()}` : `${date}|none`;
 }
 
 // ── Local task row type ────────────────────────────────────────────────────────
@@ -126,6 +147,16 @@ interface TaskRow {
   taskStatus: string;
   blockerReason: string;
   supportNeeded: string;
+  attachments: EodAttachmentDto[];
+  /** Client-side validation error for THIS row's attach control — kept per-row so one task's
+   *  bad file doesn't clobber another's error message. */
+  attachError: string | null;
+  /** Name of the file THIS row is currently uploading, or null when idle — drives the row's
+   *  loading chip and blocks a second concurrent pick until this one settles. */
+  uploadingFileName: string | null;
+  /** Fraction (0–1) of uploadingFileName's bytes sent so far, or null before the browser has
+   *  reported a first progress event. Ignored when uploadingFileName is null. */
+  uploadProgress: number | null;
 }
 
 let rowSeq = 0;
@@ -142,6 +173,10 @@ function newRow(): TaskRow {
     taskStatus:       '', // no default — the employee must pick one
     blockerReason:    '',
     supportNeeded:    '',
+    attachments:      [],
+    attachError:      null,
+    uploadingFileName: null,
+    uploadProgress:   null,
   };
 }
 
@@ -154,9 +189,13 @@ function rowFromDto(dto: EodTaskDto): TaskRow {
     categoryName:     dto.categoryName,
     description:      dto.description ?? '',
     hours:            dto.hours != null ? String(dto.hours) : '',
-    taskStatus:       dto.taskStatus ?? 'COMPLETED',
+    taskStatus:       dto.taskStatus ?? '', // no default — matches project/category/hours
     blockerReason:    dto.blockerReason ?? '',
     supportNeeded:    dto.supportNeeded ?? '',
+    attachments:      dto.attachments ?? [],
+    attachError:      null,
+    uploadingFileName: null,
+    uploadProgress:   null,
   };
 }
 
@@ -256,6 +295,107 @@ function CharCount({ value, max = MAX_TEXT_LEN }: { value: string; max?: number 
   );
 }
 
+// ── Attachment list (shared by the EOD-level and every task-level attach control) ──────────────
+
+/** "Preview" is the only piece of this chip that's a link rather than decoration, so it needs
+ *  its own hover affordance (underline + brighten) to read as clickable — a plain color-only
+ *  button looks identical to inert label text next to it. */
+function PreviewAttachmentLink({ onClick }: { onClick: () => void }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer', padding: '2px 2px 2px 4px', fontSize: 11,
+        color: hovered ? 'var(--brand)' : 'var(--info)',
+        textDecoration: hovered ? 'underline' : 'none',
+      }}
+    >
+      Preview
+    </button>
+  );
+}
+
+function AttachmentList({
+  attachments, onPreview, onRemove, readOnly, uploadingFileName, uploadProgress,
+}: {
+  attachments: EodAttachmentDto[];
+  onPreview: (attachment: EodAttachmentDto) => void;
+  onRemove: (id: number) => void;
+  readOnly: boolean;
+  /** Name of a file this scope is currently uploading, rendered as a trailing loading chip —
+   *  the upload lifecycle's in-progress state. Omit/null when nothing is in flight. */
+  uploadingFileName?: string | null;
+  /** Fraction (0–1) of uploadingFileName's bytes sent so far — drives the chip's progress bar
+   *  width. Null before the browser reports a first event (chip shows an indeterminate bar). */
+  uploadProgress?: number | null;
+}) {
+  if (attachments.length === 0 && !uploadingFileName) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+      {attachments.map(a => (
+        <span key={a.id} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 6px 4px 9px', borderRadius: 20,
+          background: 'var(--raised2)', border: '1px solid var(--line2)', fontSize: 11.5, color: 'var(--txt)',
+        }}>
+          <Paperclip size={11} aria-hidden="true" style={{ color: 'var(--txt-dim)', flexShrink: 0 }} />
+          {a.fileName} <span style={{ color: 'var(--txt-dim)' }}>({fmtAttachmentSize(a.fileSize)})</span>
+          <PreviewAttachmentLink onClick={() => onPreview(a)} />
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => onRemove(a.id)}
+              aria-label={`Remove ${a.fileName}`}
+              style={{ display: 'flex', background: 'none', border: 'none', color: 'var(--txt-dim)', cursor: 'pointer', padding: 2 }}
+            >
+              <X size={11} aria-hidden="true" />
+            </button>
+          )}
+        </span>
+      ))}
+      {/* Upload in progress — the loading state of the lifecycle. Two phases, both real (never a
+          fixed fake delay):
+          1. Sending — the bar's width tracks the byte count the browser's own upload progress
+             event reports (see uploadEodAttachment's onProgress), so a 200 KB file's bar fills in
+             a blink and a 10 MB one visibly tracks its transfer.
+          2. Finishing — every byte is on the wire (fraction reaches 1) but the server hasn't
+             answered yet (it's still writing the file). This can visibly outlast the send itself,
+             so the bar switches to indeterminate and the label changes rather than sitting on a
+             motionless "100%" that reads as hung.
+          Success/failure resolve this into a real chip above (via the parent's onSuccess) or the
+          row's attachError message. */}
+      {uploadingFileName && (() => {
+        const sending = uploadProgress != null && uploadProgress < 1;
+        return (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 20,
+            background: 'var(--raised2)', border: '1px dashed var(--line2)', fontSize: 11.5, color: 'var(--txt-mut)',
+          }}>
+            <Loader2 size={11} className="nf-r-spin" aria-hidden="true" style={{ color: 'var(--info)', flexShrink: 0 }} />
+            {sending ? <>Uploading {uploadingFileName}…</> : <>Finishing {uploadingFileName}…</>}
+            <span style={{
+              position: 'relative', width: 48, height: 4, borderRadius: 2, overflow: 'hidden',
+              background: 'var(--line2)', flexShrink: 0,
+            }}>
+              <span style={{
+                position: 'absolute', inset: '0 auto 0 0', height: '100%', borderRadius: 2,
+                background: 'var(--info)',
+                width: sending ? `${Math.round(uploadProgress! * 100)}%` : '35%',
+                transition: sending ? 'width 150ms linear' : undefined,
+                ...(sending ? {} : { animation: 'nf-r-indeterminate 1.1s ease-in-out infinite' }),
+              }} />
+            </span>
+            {sending && <span>{Math.round(uploadProgress! * 100)}%</span>}
+          </span>
+        );
+      })()}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function SubmitEOD() {
@@ -268,7 +408,7 @@ export default function SubmitEOD() {
   const [selectedDate, setSelectedDate] = useState<string>(() => searchParams.get('date') ?? todayISO());
 
   // Entry state — updated from backend responses
-  const [, setEntryId] = useState<number | null>(null);
+  const [entryId, setEntryId] = useState<number | null>(null);
   const [entryStatus, setEntryStatus] = useState<string | null>(null);
 
   // Form fields
@@ -534,6 +674,84 @@ export default function SubmitEOD() {
     },
   });
 
+  // ── Attachments ────────────────────────────────────────────────────────────
+  // Uploads always go up as EOD-level (no taskId) — a task row has no stable server id from the
+  // frontend's perspective (every eod_task row is destroyed and recreated on each Save Draft, so
+  // the app never tracks one client-side; see EodService.saveDraft). Task-level association is
+  // carried entirely through buildRequest()'s per-task attachmentIds, which the server re-points
+  // to the freshly-created task row on the next save — see EodAttachmentService.reassignForSave.
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ file, entryId: id, onProgress }: {
+      file: File; entryId: number; onProgress: (fraction: number) => void;
+    }) => uploadEodAttachment(id, file, undefined, onProgress),
+  });
+  const deleteAttachmentMutation = useMutation({
+    mutationFn: (attachmentId: number) => deleteEodAttachment(attachmentId),
+  });
+
+  /** Runs `onReady(entryId)` once an entry id exists — saving a draft first if none does yet,
+   *  the same implicit-save-before-continuing pattern handleSubmit already uses. `onFail` covers
+   *  that implicit draft save failing (draftMutation's own onError already toasts the generic
+   *  message; this lets a caller also clear its own in-flight state, e.g. an upload spinner that
+   *  would otherwise spin forever since onReady never fires). */
+  function withEntryId(onReady: (id: number) => void, onFail?: (err: unknown) => void) {
+    if (entryId != null) { onReady(entryId); return; }
+    draftMutation.mutate(buildRequest(), { onSuccess: (entry) => onReady(entry.id), onError: onFail });
+  }
+
+  function handleTaskFileSelected(localId: string, e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const row = tasks.find(t => t.localId === localId);
+    if (!row) return;
+    const err = validateAttachmentFile(file, row.attachments.length, MAX_ATTACHMENTS_PER_TASK);
+    if (err) { updateTask(localId, { attachError: err }); return; }
+    // Loading state — the chip in AttachmentList picks this up immediately, before the network
+    // round trip even starts.
+    updateTask(localId, { attachError: null, uploadingFileName: file.name, uploadProgress: null });
+    const onUploadFail = (err2: unknown) => updateTask(localId, {
+      attachError: extractError(err2), uploadingFileName: null, uploadProgress: null,
+    });
+    withEntryId(id => {
+      uploadMutation.mutate({
+        file, entryId: id,
+        onProgress: fraction => updateTask(localId, { uploadProgress: fraction }),
+      }, {
+        onSuccess: dto => {
+          setTasks(prev => prev.map(t =>
+            t.localId === localId
+              ? { ...t, attachments: [...t.attachments, dto], uploadingFileName: null, uploadProgress: null }
+              : t));
+          // Success state — brief confirmation toast, on top of the new chip appearing in the list.
+          toast(`"${dto.fileName}" attached`);
+        },
+        onError: onUploadFail,
+      });
+    }, onUploadFail);
+  }
+
+  function handleRemoveTaskAttachment(localId: string, attachmentId: number) {
+    deleteAttachmentMutation.mutate(attachmentId, {
+      onSuccess: () => setTasks(prev => prev.map(t =>
+        t.localId === localId ? { ...t, attachments: t.attachments.filter(a => a.id !== attachmentId) } : t)),
+      onError: err => updateTask(localId, { attachError: extractError(err) }),
+    });
+  }
+
+  async function handlePreviewAttachment(attachment: EodAttachmentDto) {
+    try {
+      await previewEodAttachment(
+        attachment,
+        () => getEodAttachmentDataUrl(attachment.id),
+        extractError,
+      );
+    } catch (err) {
+      toast(extractError(err), 'error');
+    }
+  }
+
   // ── Client-side validation ────────────────────────────────────────────────
 
   function validate(): string[] {
@@ -642,7 +860,10 @@ export default function SubmitEOD() {
         taskStatus:     t.taskStatus || null, // '' would fail enum parsing server-side
         blockerReason:  t.blockerReason || null,
         supportNeeded:  t.supportNeeded || null,
+        attachmentIds:  t.attachments.map(a => a.id),
       })),
+      // No EOD-level attachment area anymore — every attachment is scoped to a task row.
+      attachmentIds: [],
     };
   }
 
@@ -678,6 +899,10 @@ export default function SubmitEOD() {
   }
 
   function removeTask(localId: string) {
+    // Clean up this row's own attachments too — otherwise they'd survive as EOD-level orphans
+    // once this task's underlying row is gone (see reassignForSave's ON DELETE SET NULL note).
+    const row = tasks.find(t => t.localId === localId);
+    row?.attachments.forEach(a => deleteAttachmentMutation.mutate(a.id));
     setTasks(prev => prev.filter(t => t.localId !== localId));
   }
 
@@ -1063,6 +1288,9 @@ export default function SubmitEOD() {
                   onRemove={() => removeTask(task.localId)}
                   onCategoryChange={catId => handleCategoryChange(task.localId, catId)}
                   canRemove={tasks.length > 1}
+                  onFileSelected={e => handleTaskFileSelected(task.localId, e)}
+                  onPreviewAttachment={handlePreviewAttachment}
+                  onRemoveAttachment={attachmentId => handleRemoveTaskAttachment(task.localId, attachmentId)}
                 />
               ))}
             </div>
@@ -1200,9 +1428,15 @@ interface TaskCardProps {
   onRemove: () => void;
   onCategoryChange: (catId: string) => void;
   canRemove: boolean;
+  onFileSelected: (e: ChangeEvent<HTMLInputElement>) => void;
+  onPreviewAttachment: (attachment: EodAttachmentDto) => void;
+  onRemoveAttachment: (attachmentId: number) => void;
 }
 
-function TaskCard({ task, index, projects, categories, isReadOnly, onUpdate, onRemove, onCategoryChange, canRemove }: TaskCardProps) {
+function TaskCard({
+  task, index, projects, categories, isReadOnly, onUpdate, onRemove, onCategoryChange, canRemove,
+  onFileSelected, onPreviewAttachment, onRemoveAttachment,
+}: TaskCardProps) {
   // A leave row has no project and is always Completed — those two fields are locked.
   // Hours stay editable (8 full day, 4 half day).
   const isLeave   = task.categoryName === LEAVE;
@@ -1332,6 +1566,45 @@ function TaskCard({ task, index, projects, categories, isReadOnly, onUpdate, onR
               <CharCount value={task.description} />
             </>}
       </div>
+
+      {/* Attachment — the single place to upload documents/images for this specific task row.
+          Once the report is read-only, a task with nothing attached shows no Attachment field
+          at all rather than an empty, unusable upload control. */}
+      {(!isReadOnly || task.attachments.length > 0) && (
+        <div style={{ marginTop: 10 }}>
+          <Label>Attachment</Label>
+          <AttachmentList
+            attachments={task.attachments}
+            onPreview={onPreviewAttachment}
+            onRemove={onRemoveAttachment}
+            readOnly={isReadOnly}
+            uploadingFileName={task.uploadingFileName}
+            uploadProgress={task.uploadProgress}
+          />
+          {task.attachError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--risk)', marginBottom: 6 }}>
+              <AlertTriangle size={11} aria-hidden="true" style={{ flexShrink: 0 }} />
+              {task.attachError}
+            </div>
+          )}
+          {!isReadOnly && !task.uploadingFileName && task.attachments.length < MAX_ATTACHMENTS_PER_TASK && (
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 6,
+              background: 'transparent', border: '1px dashed var(--line2)', color: 'var(--txt-mut)',
+              fontSize: 12, cursor: 'pointer',
+            }}>
+              <Paperclip size={12} aria-hidden="true" />
+              Attach file
+              <input
+                type="file"
+                accept={ALLOWED_ATTACHMENT_TYPES.join(',')}
+                onChange={onFileSelected}
+                style={{ display: 'none' }}
+              />
+            </label>
+          )}
+        </div>
+      )}
 
       {/* Blocker reason — only for BLOCKED status */}
       {isBlocked && (

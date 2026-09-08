@@ -8,11 +8,19 @@ interface ModalProps {
   onClose: () => void;
   children: React.ReactNode;
   width?: number;
+  /**
+   * Fixed target height in px, so the panel renders at the same outer size regardless of how
+   * much `children` content there is — short content leaves blank space in the scrollable body
+   * instead of shrinking the panel. Still capped to the viewport (via `min(height, 100%)`), so a
+   * short window shrinks it rather than overflowing. Omit for the default: panel shrinks to fit
+   * its content, capped at the viewport (existing behavior, unaffected callers keep this).
+   */
+  height?: number;
   /** Sticky footer (e.g. Save/Cancel) rendered outside the scrollable body — never clipped. */
   footer?: React.ReactNode;
 }
 
-export function Modal({ open, title, onClose, children, width = 440, footer }: ModalProps) {
+export function Modal({ open, title, onClose, children, width = 440, height, footer }: ModalProps) {
   const reduced = useReducedMotion();
 
   useEffect(() => {
@@ -97,6 +105,7 @@ export function Modal({ open, title, onClose, children, width = 440, footer }: M
             transition={{ duration: reduced ? 0 : 0.2, ease: [0.23, 1, 0.32, 1] }}
             style={{
               width: `min(${width}px, 100%)`,
+              ...(height != null ? { height: `min(${height}px, 100%)` } : null),
               maxHeight: '100%',
               display: 'flex',
               flexDirection: 'column',

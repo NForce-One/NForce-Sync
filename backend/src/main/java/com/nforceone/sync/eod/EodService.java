@@ -76,6 +76,8 @@ public class EodService {
     private final BusinessRuleConfigRepository configRepository;
     private final ShiftDefinitionRepository shiftRepository;
     private final com.nforceone.sync.businessrules.HolidayRepository holidayRepository;
+    private final EodAttachmentService attachmentService;
+    private final com.nforceone.sync.notification.NotificationService notificationService;
 
     public EodService(EodEntryRepository entryRepository,
                       EodTaskRepository taskRepository,
@@ -85,7 +87,9 @@ public class EodService {
                       ApprovalActionRepository actionRepository,
                       BusinessRuleConfigRepository configRepository,
                       ShiftDefinitionRepository shiftRepository,
-                      com.nforceone.sync.businessrules.HolidayRepository holidayRepository) {
+                      com.nforceone.sync.businessrules.HolidayRepository holidayRepository,
+                      EodAttachmentService attachmentService,
+                      com.nforceone.sync.notification.NotificationService notificationService) {
         this.entryRepository   = entryRepository;
         this.taskRepository    = taskRepository;
         this.userRepository    = userRepository;
@@ -95,6 +99,8 @@ public class EodService {
         this.configRepository  = configRepository;
         this.shiftRepository   = shiftRepository;
         this.holidayRepository = holidayRepository;
+        this.attachmentService = attachmentService;
+        this.notificationService = notificationService;
     }
 
     public EodEntryDto saveDraft(SaveEodRequest request, String actingEmail) {
@@ -147,7 +153,9 @@ public class EodService {
         entry.setTimeAdjustmentType(adjustmentAllowed ? request.timeAdjustmentType() : null);
         entry.setTimeAdjustmentMinutes(adjustmentAllowed ? request.timeAdjustmentMinutes() : null);
 
-        // Replace tasks
+        // Replace tasks. Every existing eod_task row is destroyed and recreated here
+        // (orphanRemoval), so a task-level attachment cannot keep pointing at an eod_task.id
+        // across saves — reassignForSave below re-points it right after save().
         entry.getTasks().clear();
         if (!isHoliday && request.tasks() != null) {
             for (SaveEodTaskRequest taskReq : request.tasks()) {
@@ -155,8 +163,9 @@ public class EodService {
             }
         }
 
+        EodEntry saved;
         try {
-            return EodEntryDto.from(entryRepository.save(entry));
+            saved = entryRepository.save(entry);
         } catch (DataIntegrityViolationException ex) {
             // Two concurrent saves for a brand-new day can both see entry == null above and
             // both try to insert; the DB's (employee_id, entry_date) unique constraint catches
@@ -164,6 +173,25 @@ public class EodService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "An entry for this date was just created — reload and try again");
         }
+
+        // IMPORTANT: re-read the tasks from `saved`, NOT from the pre-save objects built above.
+        // entry already had an id (an existing DRAFT/REJECTED entry being edited), so
+        // JpaRepository.save() takes the merge() path, not persist() — merge() copies state onto
+        // a separately managed entity graph and returns THAT, leaving the original `entry`/task
+        // objects transient. Handing those transient objects to EodAttachment.setTask() below
+        // would throw TransientPropertyValueException ("references an unsaved transient
+        // instance"). saved.getTasks() (ordered by id ASC, matching insertion order, which
+        // matches request.tasks() order) is the actual managed, id-populated graph.
+        List<EodTask> newTasks = saved.getTasks();
+        List<List<Long>> perTaskAttachmentIds = request.tasks() == null ? List.of()
+                : request.tasks().stream().map(SaveEodTaskRequest::attachmentIds).toList();
+        attachmentService.reassignForSave(saved.getId(), request.attachmentIds(), perTaskAttachmentIds, newTasks);
+
+        EodAttachmentService.AttachmentsByScope attachments =
+                attachmentService.loadForEntries(List.of(saved.getId()));
+        return EodEntryDto.from(saved, null, null,
+                attachments.entryLevelByEntryId().getOrDefault(saved.getId(), List.of()),
+                attachments.byTaskId());
     }
 
     public EodEntryDto submit(Long entryId, String actingEmail) {
@@ -200,7 +228,24 @@ public class EodService {
             entry.setManagerId(employee.getManager() != null ? employee.getManager().getId() : null);
         }
 
-        return EodEntryDto.from(entryRepository.save(entry));
+        EodEntry saved = entryRepository.save(entry);
+
+        // No manager assigned → nobody to notify (matches the rest of the module: an
+        // unmanaged employee's entry is only ever actionable by a SUPERADMIN, who works off the
+        // Approvals list directly rather than a per-submission notification).
+        if (saved.getManagerId() != null) {
+            notificationService.send(saved.getManagerId(), "EOD_SUBMITTED",
+                    "New EOD submission",
+                    employee.getFullName() + " submitted their EOD entry for "
+                            + com.nforceone.sync.notification.NotificationDates.format(saved.getEntryDate()) + ".",
+                    "/team/approvals?highlight=" + saved.getId());
+        }
+
+        EodAttachmentService.AttachmentsByScope attachments =
+                attachmentService.loadForEntries(List.of(saved.getId()));
+        return EodEntryDto.from(saved, null, null,
+                attachments.entryLevelByEntryId().getOrDefault(saved.getId(), List.of()),
+                attachments.byTaskId());
     }
 
     @Transactional(readOnly = true)
@@ -319,7 +364,7 @@ public class EodService {
                 null, employee.getId(), employee.getFullName(), employee.getEmployeeCode(),
                 date, EodEntry.Status.MISSED.name(), EodEntry.DayType.WORKING_DAY.name(),
                 null, null, false, null, null, null, null,
-                null, null, null, List.of(),
+                null, null, null, List.of(), List.of(),
                 null, null, null, null, null, null, null, null, null, null);
     }
 
@@ -332,7 +377,11 @@ public class EodService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Access denied to this EOD entry");
         }
-        return EodEntryDto.from(entry, latestReviewerComment(entry));
+        EodAttachmentService.AttachmentsByScope attachments =
+                attachmentService.loadForEntries(List.of(entry.getId()));
+        return EodEntryDto.from(entry, latestReviewerComment(entry), null,
+                attachments.entryLevelByEntryId().getOrDefault(entry.getId(), List.of()),
+                attachments.byTaskId());
     }
 
     @Transactional(readOnly = true)
@@ -407,6 +456,11 @@ public class EodService {
             if (!leaveRow && task.getProject() == null) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "All tasks must have a project assigned");
+            }
+            // A draft may leave this unset (V75 — task_status is nullable), but submission may not.
+            if (task.getTaskStatus() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "All tasks must have a status assigned");
             }
             // Defence in depth: buildTask already strips these, so reaching here means a row
             // was written by some other path.
@@ -642,7 +696,9 @@ public class EodService {
 
         task.setDescription(req.description());
         task.setHours(req.hours());
-        task.setTaskStatus(req.taskStatus() != null ? req.taskStatus() : EodTask.TaskStatus.COMPLETED);
+        // No forced default (V75) — a draft may carry a task with no status yet, same as one with
+        // no project/category/hours. validateLoggedDay requires a real value before submission.
+        task.setTaskStatus(req.taskStatus());
         task.setBlockerReason(req.blockerReason());
         task.setSupportNeeded(req.supportNeeded());
 
@@ -668,12 +724,7 @@ public class EodService {
     }
 
     private boolean canReadEntry(AppUser actor, EodEntry entry) {
-        if (entry.getEmployee().getId().equals(actor.getId())) return true;
-        return actor.getRole() == AppUser.Role.MANAGER
-            || actor.getRole() == AppUser.Role.SUPERADMIN
-            || actor.getRole() == AppUser.Role.HR
-            || actor.getRole() == AppUser.Role.DM
-            || actor.getRole() == AppUser.Role.LEADERSHIP;
+        return EodAccessPolicy.canRead(actor, entry);
     }
 
     // Single-entry path: still used by getEntry()
@@ -709,8 +760,13 @@ public class EodService {
             }
         }
 
+        List<Long> entryIds = entries.stream().map(EodEntry::getId).toList();
+        EodAttachmentService.AttachmentsByScope attachments = attachmentService.loadForEntries(entryIds);
+
         return entries.stream()
-                .map(e -> EodEntryDto.from(e, commentMap.get(e.getId())))
+                .map(e -> EodEntryDto.from(e, commentMap.get(e.getId()), null,
+                        attachments.entryLevelByEntryId().getOrDefault(e.getId(), List.of()),
+                        attachments.byTaskId()))
                 .toList();
     }
 

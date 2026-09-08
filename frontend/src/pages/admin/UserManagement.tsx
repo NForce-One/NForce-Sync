@@ -1458,31 +1458,39 @@ function DeleteModal({
 // ── Action Button ─────────────────────────────────────────────────────────────
 
 function ActionBtn({
-  icon, label, onClick, danger = false,
+  icon, label, onClick, danger = false, disabled = false, disabledTitle,
 }: {
   icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean;
+  /** Renders the control inert — no click, no hover affordance — rather than merely styling it
+   *  dim, so an invalid action (e.g. resetting an inactive user's password) can't be triggered
+   *  at all rather than being caught after the fact. */
+  disabled?: boolean;
+  /** Tooltip/aria-label shown while disabled, explaining why. Falls back to `label` if omitted. */
+  disabledTitle?: string;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      aria-label={disabled ? (disabledTitle ?? label) : label}
+      title={disabled ? (disabledTitle ?? label) : label}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         width: 30, height: 30,
-        background: danger ? 'rgba(228,55,61,.08)' : 'var(--raised2)',
-        border: `1px solid ${danger ? 'rgba(228,55,61,.25)' : 'var(--line2)'}`,
-        borderRadius: 6, cursor: 'pointer',
-        color: danger ? '#E4373D' : 'var(--txt-dim)',
+        background: danger && !disabled ? 'rgba(228,55,61,.08)' : 'var(--raised2)',
+        border: `1px solid ${danger && !disabled ? 'rgba(228,55,61,.25)' : 'var(--line2)'}`,
+        borderRadius: 6, cursor: disabled ? 'not-allowed' : 'pointer',
+        color: danger && !disabled ? '#E4373D' : 'var(--txt-dim)',
+        opacity: disabled ? 0.45 : 1,
         transition: 'background 0.14s, color 0.14s, border-color 0.14s',
       }}
-      onMouseEnter={e => {
+      onMouseEnter={disabled ? undefined : e => {
         e.currentTarget.style.color = danger ? '#E4373D' : 'var(--txt)';
         e.currentTarget.style.borderColor = danger ? 'rgba(228,55,61,.5)' : 'var(--txt-dim)';
         e.currentTarget.style.background = danger ? 'rgba(228,55,61,.14)' : 'var(--raised)';
       }}
-      onMouseLeave={e => {
+      onMouseLeave={disabled ? undefined : e => {
         e.currentTarget.style.color = danger ? '#E4373D' : 'var(--txt-dim)';
         e.currentTarget.style.borderColor = danger ? 'rgba(228,55,61,.25)' : 'var(--line2)';
         e.currentTarget.style.background = danger ? 'rgba(228,55,61,.08)' : 'var(--raised2)';
@@ -2032,7 +2040,13 @@ export default function UserManagement() {
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <ActionBtn icon={<Pencil size={13} />} label="Edit user" onClick={() => handleEditOpen(user)} />
-                          <ActionBtn icon={<RotateCcw size={13} />} label="Reset password" onClick={() => setResetTarget(user)} />
+                          <ActionBtn
+                            icon={<RotateCcw size={13} />}
+                            label="Reset password"
+                            onClick={() => setResetTarget(user)}
+                            disabled={user.status !== 'ACTIVE'}
+                            disabledTitle="Password reset is unavailable for inactive accounts"
+                          />
                           <ActionBtn
                             icon={user.status === 'ACTIVE' ? <PowerOff size={13} /> : <Power size={13} />}
                             label={user.status === 'ACTIVE' ? 'Deactivate user' : 'Reactivate user'}

@@ -1,8 +1,16 @@
 import axios from "axios";
 
+// No default Content-Type header here — axios's own transformRequest already sets
+// "application/json" for a plain object payload (defaults/index.js, the isObjectPayload
+// fallback), so this was never needed for JSON requests. Setting it as an instance default did
+// actively break every multipart upload in the app (blocker reply attachments, profile photo):
+// transformRequest's FIRST branch checks headers.getContentType() BEFORE the later
+// FormData-aware Content-Type-clearing logic runs, and when it sees "application/json" already
+// present, it converts a FormData payload straight to a JSON string via formDataToJSON() instead
+// of sending it as multipart — silently discarding every File in the process. Confirmed live:
+// removing this line is what makes a FormData POST actually reach the server as multipart/form-data.
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api",
-  headers: { "Content-Type": "application/json" },
 });
 
 api.interceptors.request.use((config) => {

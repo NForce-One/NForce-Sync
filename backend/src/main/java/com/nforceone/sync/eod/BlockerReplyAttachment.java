@@ -3,6 +3,8 @@ package com.nforceone.sync.eod;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 
@@ -29,7 +31,12 @@ public class BlockerReplyAttachment {
     @Column(name = "file_size", nullable = false)
     private Long fileSize;
 
-    @Lob
+    // @Lob (removed) mapped byte[] to Types.BLOB, which Hibernate/the PG JDBC driver bind as a
+    // Large Object OID reference (an int8/bigint handle into pg_largeobject) rather than the raw
+    // `bytea` column this migration actually created — every insert failed with "column data is
+    // of type bytea but expression is of type bigint". VARBINARY is the correct mapping for a
+    // plain bytea column; attachments here are capped at 5MB so no LOB streaming is needed anyway.
+    @JdbcTypeCode(SqlTypes.VARBINARY)
     @Column(nullable = false)
     private byte[] data;
 

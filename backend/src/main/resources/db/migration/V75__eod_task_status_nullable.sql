@@ -1,0 +1,11 @@
+-- A new task row on the Submit EOD form must start with Status genuinely unselected, matching
+-- Project/Category/Hours — none of which force a value either. task_status was NOT NULL, so
+-- EodService.buildTask had to substitute COMPLETED for a blank status on every Save Draft (a
+-- draft skips full validation by design), which is what silently turned an unset Status back into
+-- "Completed" the next time the draft was reloaded.
+--
+-- Submitting an entry still requires every task to have a real status — EodService.validateLoggedDay
+-- (server-side) and SubmitEOD's validate() (client-side) both reject a null/blank one before the
+-- entry can leave DRAFT. Only an in-progress draft may now carry a task with no status yet, the
+-- same way it already may carry one with no project, category, or hours.
+ALTER TABLE eod_task ALTER COLUMN task_status DROP NOT NULL;

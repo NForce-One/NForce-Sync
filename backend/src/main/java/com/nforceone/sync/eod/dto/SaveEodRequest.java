@@ -27,5 +27,10 @@ public record SaveEodRequest(
 
         /** @Valid is required for the per-task constraints (description/blockerReason length) to
          *  be checked at all — without it, Bean Validation does not descend into the list. */
-        @Valid List<SaveEodTaskRequest> tasks
+        @Valid List<SaveEodTaskRequest> tasks,
+
+        /** IDs of attachments (already uploaded via the separate upload endpoint) that should be
+         *  associated with the overall EOD entry — null/empty is fine. See
+         *  EodAttachmentService.reassignForSave for how these get (re-)pointed on every save. */
+        List<Long> attachmentIds
 ) {}

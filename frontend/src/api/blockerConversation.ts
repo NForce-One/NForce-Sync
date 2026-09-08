@@ -69,9 +69,10 @@ export function useSendBlockerReply(taskId: number, scope: ConversationScope, ra
       const form = new FormData();
       form.append('message', message);
       files.forEach(f => form.append('files', f));
-      return api.post<BlockerReplyDto>(`${basePath(scope)}/${taskId}/replies`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      }).then(r => r.data);
+      // No manual Content-Type here: axios strips whatever is set (instance default included)
+      // and lets the browser generate `multipart/form-data; boundary=...` for a FormData body —
+      // a hardcoded value with no boundary would be actively wrong if it ever did take effect.
+      return api.post<BlockerReplyDto>(`${basePath(scope)}/${taskId}/replies`, form).then(r => r.data);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: threadKey(scope, taskId) });

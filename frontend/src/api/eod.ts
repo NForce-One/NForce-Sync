@@ -1,5 +1,17 @@
 import { api } from './client';
 
+/** Metadata only — file bytes are fetched on demand via getEodAttachmentDataUrl. */
+export interface EodAttachmentDto {
+  id: number;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  /** Null for an EOD-level attachment. */
+  taskId: number | null;
+  uploadedByName: string | null;
+  createdAt: string;
+}
+
 export interface EodTaskDto {
   id: number;
   projectId: number | null;
@@ -11,6 +23,7 @@ export interface EodTaskDto {
   taskStatus: string;
   blockerReason: string | null;
   supportNeeded: string | null;
+  attachments: EodAttachmentDto[];
 }
 
 export interface EodEntryDto {
@@ -32,6 +45,8 @@ export interface EodEntryDto {
   createdAt: string;
   updatedAt: string;
   tasks: EodTaskDto[];
+  /** EOD-level attachments only — a task's own attachments live on that EodTaskDto.attachments. */
+  attachments: EodAttachmentDto[];
   reviewerComment: string | null;
   /** PM-only enrichment — undefined/null for the Team Lead's own view of an entry. */
   escalated?: boolean | null;
@@ -55,6 +70,10 @@ export interface SaveTaskRequest {
   taskStatus: string | null;
   blockerReason: string | null;
   supportNeeded: string | null;
+  /** IDs of attachments (already uploaded via uploadEodAttachment) that belong to this task row —
+   *  task rows are destroyed and recreated on every save, so this is how a task-level attachment
+   *  survives across saves: the server re-points these IDs to the freshly-created task row. */
+  attachmentIds: number[];
 }
 
 export interface SaveEodRequest {
@@ -66,6 +85,8 @@ export interface SaveEodRequest {
   nextDayPlan: string | null;
   remarks: string | null;
   tasks: SaveTaskRequest[];
+  /** IDs of attachments that belong to the overall EOD entry (not any specific task). */
+  attachmentIds: number[];
 }
 
 export async function saveDraft(req: SaveEodRequest): Promise<EodEntryDto> {
@@ -138,4 +159,59 @@ export interface EodDayDefaultsDto {
 export async function getDayDefaults(date: string): Promise<EodDayDefaultsDto> {
   const res = await api.get<EodDayDefaultsDto>('/eod/day-defaults', { params: { date } });
   return res.data;
+}
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+
+/**
+ * Uploads one file to an EOD entry, optionally scoped to a task row (omit `taskId` for an
+ * EOD-level attachment). No manual Content-Type header: axios strips the instance default and
+ * lets the browser generate the correct `multipart/form-data; boundary=...` for a FormData body
+ * — a hardcoded value here previously broke every attachment upload in the app (see
+ * blockerConversation.ts's identical note and client.ts, where the root-cause default header was
+ * removed for exactly this reason).
+ */
+export async function uploadEodAttachment(
+  entryId: number,
+  file: File,
+  taskId?: number,
+  /** Fraction uploaded so far, 0–1 — driven by the browser's real upload byte counter
+   *  (axios's onUploadProgress/XHR progress event), so it tracks actual transfer time rather
+   *  than a fixed delay. Omitted when the browser can't report a total (rare, non-file bodies). */
+  onProgress?: (fraction: number) => void,
+): Promise<EodAttachmentDto> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await api.post<EodAttachmentDto>(`/eod/${entryId}/attachments`, form, {
+    params: { taskId },
+    onUploadProgress: onProgress
+      ? (evt) => { if (evt.total) onProgress(evt.loaded / evt.total); }
+      : undefined,
+  });
+  return res.data;
+}
+
+export async function deleteEodAttachment(attachmentId: number): Promise<void> {
+  await api.delete(`/eod/attachments/${attachmentId}`);
+}
+
+/**
+ * Fetches one attachment's bytes and resolves to a `data:` URL rather than an object (`blob:`)
+ * URL. Needed specifically for opening the file in a NEW tab (the "Preview" link, on both Submit
+ * EOD and the Approvals modal — see previewEodAttachment): a `blob:` URL only resolves inside the
+ * browsing context (and, in Chromium, sometimes the very renderer process) that minted it via
+ * `URL.createObjectURL` — a new tab is not guaranteed to share that context, so the embedded
+ * `<img>`/`<embed>` can fail to load with nothing but a blank pane and no console error to explain
+ * why. A `data:` URL embeds the bytes directly, so it resolves the same way regardless of which
+ * window renders it.
+ */
+export async function getEodAttachmentDataUrl(attachmentId: number): Promise<string> {
+  const res = await api.get(`/eod/attachments/${attachmentId}`, { responseType: 'blob' });
+  const blob = res.data as Blob;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read attachment'));
+    reader.readAsDataURL(blob);
+  });
 }

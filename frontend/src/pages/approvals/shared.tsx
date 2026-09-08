@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, Paperclip } from 'lucide-react';
 import {
   useApprovalHistory, useApprove, useReject,
 } from '../../api/approvals';
@@ -7,7 +7,9 @@ import { Modal } from '../../components/Modal';
 import { useToast } from '../../lib/toast';
 import { formatDateTime } from '../../lib/date';
 import { formatDate as fmtDate, formatDurationMinutes } from '../../lib/date';
-import type { EodEntryDto, EodTaskDto } from '../../api/eod';
+import { getEodAttachmentDataUrl } from '../../api/eod';
+import type { EodEntryDto, EodTaskDto, EodAttachmentDto } from '../../api/eod';
+import { previewEodAttachment } from '../../lib/eodAttachments';
 
 // Shared between the Team Lead's and the Project Manager's Approvals pages — the submission
 // detail modal is correctness-sensitive and must not fork between the two roles, so both pages
@@ -299,6 +301,44 @@ export function AuditTrail({ entry, extraEntries }: { entry: EodEntryDto; extraE
   );
 }
 
+// ── attachments (preview-only — approvers can see and open, never upload/remove) ────────────────
+
+async function previewApprovalAttachment(attachment: EodAttachmentDto) {
+  try {
+    // Same progressive open (loading state → real content, never a blank window) that Submit
+    // EOD's own "Preview" uses — see previewEodAttachment for why. Approvers get the identical,
+    // already-fixed behavior rather than a second, divergent implementation of the same feature.
+    await previewEodAttachment(attachment, () => getEodAttachmentDataUrl(attachment.id), extractError);
+  } catch {
+    // Best-effort: previewEodAttachment already painted the tab's own error state, so a failed
+    // fetch is visible there — not worth a second toast on top of it in this read-only list.
+  }
+}
+
+function EodAttachmentChips({ attachments }: { attachments: EodAttachmentDto[] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+      {attachments.map(a => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => previewApprovalAttachment(a)}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20,
+            background: 'var(--raised2)', border: '1px solid var(--line2)', fontSize: 11.5,
+            color: 'var(--txt)', cursor: 'pointer',
+          }}
+        >
+          <Paperclip size={11} aria-hidden="true" style={{ color: 'var(--txt-dim)', flexShrink: 0 }} />
+          {a.fileName}
+          <span style={{ color: 'var(--info)' }}>Preview</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── submission detail modal ─────────────────────────────────────────────────────
 
 export function SubmissionDetailModal({
@@ -332,6 +372,10 @@ export function SubmissionDetailModal({
       title={entry ? `${entry.employeeName} — ${fmtDate(entry.entryDate)}` : 'Submission'}
       onClose={onClose}
       width={640}
+      // Fixed outer size regardless of task count — a 1-task and a 5-task submission render at
+      // the same footprint, capped to the viewport on a short window. Only the body (Tasks /
+      // Next-day plan / Remarks) scrolls when content exceeds this height.
+      height={640}
       footer={entry && editable ? (
         rejecting ? (
           <>
@@ -374,6 +418,7 @@ export function SubmissionDetailModal({
               {t.taskStatus === 'BLOCKED' && t.blockerReason && (
                 <div style={{ fontSize: 11.5, color: 'var(--risk)', marginTop: 8 }}>Blocker: {t.blockerReason}</div>
               )}
+              <EodAttachmentChips attachments={t.attachments} />
             </div>
           ))}
 
