@@ -467,8 +467,7 @@ function NavGroupRow({ label, icon: Icon, expanded, onToggle }: {
         fontSize: 13,
         fontWeight: 450,
         textAlign: 'left',
-        color: 'inherit',
-        font: 'inherit',
+        fontFamily: 'inherit',
       }}
     >
       <Icon size={17} style={{ flex: 'none', opacity: 0.8 }} aria-hidden="true" />
