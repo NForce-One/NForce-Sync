@@ -37,7 +37,9 @@ public class SearchService {
 
     private List<SearchResultDto.UserResult> searchUsers(String term, AppUser actor) {
         return switch (actor.getRole()) {
-            case SUPERADMIN, HR -> userRepository.findAll().stream()
+            // Not SUPERADMIN: user search backs a result that deep-links to /admin/users, which
+            // is now Admin-only — a Super Admin match here would be a dead-end 403.
+            case ADMIN -> userRepository.findAll().stream()
                     .filter(u -> u.getDeletedAt() == null)
                     .filter(u -> matchesUser(u, term))
                     .limit(5)
@@ -83,7 +85,7 @@ public class SearchService {
                     .map(p -> new SearchResultDto.ProjectResult(
                             p.getId(), p.getCode(), p.getName(), p.getStatus().name()))
                     .toList();
-            case HR -> List.of();
+            case ADMIN -> List.of();
         };
     }
 

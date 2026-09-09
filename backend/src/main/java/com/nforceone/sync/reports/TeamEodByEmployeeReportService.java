@@ -74,7 +74,7 @@ public class TeamEodByEmployeeReportService {
         // Lead of. Those are two different relationships and can legitimately diverge.
         List<ProjectOptionDto> projects = projectRepository.findByPmIdOrderByNameAsc(lead.getId())
                 .stream()
-                .map(p -> new ProjectOptionDto(p.getId(), p.getName()))
+                .map(p -> new ProjectOptionDto(p.getId(), p.getName(), p.getClient()))
                 .toList();
 
         // The Client filter is unaffected by this fix — it stays scoped to what the team's own

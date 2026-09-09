@@ -41,6 +41,10 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
     /** FK guard for deleting a project type. */
     long countByProjectTypeId(Long projectTypeId);
 
+    /** Org-wide project-status distribution — backs the Super Admin Executive Dashboard. */
+    @Query("SELECT p.status, COUNT(p) FROM Project p GROUP BY p.status")
+    List<Object[]> countGroupedByStatus();
+
     /** Grouped-headcount idiom, keyed on project type. */
     @Query("SELECT p.projectType.id, COUNT(DISTINCT a.employee.id) " +
            "FROM Allocation a JOIN a.project p " +

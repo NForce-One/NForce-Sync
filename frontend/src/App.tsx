@@ -18,6 +18,7 @@ import Inactive            from './pages/auth/Inactive';
 import ForceChangePassword from './pages/auth/ForceChangePassword';
 
 const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'));
+const ExecutiveDashboard  = lazy(() => import('./pages/admin/ExecutiveDashboard'));
 const UserManagement      = lazy(() => import('./pages/admin/UserManagement'));
 const AuditLog            = lazy(() => import('./pages/admin/AuditLog'));
 const RolesAccess         = lazy(() => import('./pages/admin/RolesAccess'));
@@ -43,18 +44,16 @@ const ReportsDashboard    = lazy(() => import('./pages/pm/ReportsDashboard'));
 const LeadReportsDashboard = lazy(() => import('./pages/lead/ReportsDashboard'));
 const PmBlockers          = lazy(() => import('./pages/pm/Blockers'));
 
-// Super Admin Reportee Views — reuse the PM/Team Lead components above at dedicated routes;
-// only the pages that need a distinct entry point (an initial tab, or a Team-Lead-scoped
-// Resource Allocation view with no PM/Team Lead equivalent) get a thin wrapper. Projects/My
-// Projects, Utilization, and (PM) Reports/EOD reuse the same lazy chunks already declared above.
+// Super Admin Reportee Views — Project Manager Views only (Team Lead Views was removed from
+// Super Admin's navigation/access; Team Lead's own navigation/permissions are unaffected).
+// Reuses the PM components above at dedicated routes. "Projects" and "Resource Allocation" were
+// consolidated into one "Projects & Allocation" entry/route (PmProjects) — the underlying
+// ProjectsAllocation page already has its own internal Projects/Allocation tabs, so a second
+// route/wrapper for Allocation was redundant. Utilization reuses the same lazy chunk already
+// declared above.
 const ReporteePmProjects    = lazy(() => import('./pages/admin/reportee/PmProjects'));
-const ReporteePmAllocation  = lazy(() => import('./pages/admin/reportee/PmAllocation'));
 const ReporteePmEod         = lazy(() => import('./pages/admin/reportee/PmEod'));
 const ReporteePmUtilization = lazy(() => import('./pages/admin/reportee/PmUtilization'));
-const ReporteePmReports     = lazy(() => import('./pages/admin/reportee/PmReports'));
-const ReporteeLeadAllocation = lazy(() => import('./pages/admin/reportee/LeadAllocation'));
-const ReporteeLeadEod        = lazy(() => import('./pages/admin/reportee/LeadEod'));
-const ReporteeLeadReports    = lazy(() => import('./pages/admin/reportee/LeadReports'));
 
 const Profile             = lazy(() => import('./pages/Profile'));
 const Notifications       = lazy(() => import('./pages/Notifications'));
@@ -88,18 +87,19 @@ function ChunkPrefetcher() {
     if (user.role === 'employee') {
       import('./pages/employee/Dashboard');
       import('./pages/employee/MyBlockers');
-    } else if (user.role === 'superadmin') {
+    } else if (user.role === 'admin') {
       import('./pages/admin/Dashboard');
       import('./pages/admin/UserManagement');
       import('./pages/admin/AuditLog');
       import('./pages/admin/RolesAccess');
       import('./pages/admin/OrganizationMasters');
+    } else if (user.role === 'superadmin') {
+      import('./pages/admin/ExecutiveDashboard');
+      import('./pages/admin/OrganizationMasters');
       import('./pages/admin/BusinessRules');
-      // Reportee Views (Super Admin visibility into PM/Team Lead operational pages) —
-      // not prefetched as eagerly as a Super Admin's own admin pages since they're a
-      // secondary surface, but still warmed so the first click isn't a cold chunk load.
+      // Reportee Views (Super Admin visibility into PM operational pages — Team Lead Views was
+      // removed from Super Admin's navigation/access).
       import('./pages/admin/reportee/PmProjects');
-      import('./pages/lead/MyProjects');
     } else if (user.role === 'lead') {
       import('./pages/lead/TeamDashboard');
       import('./pages/lead/MyProjects');
@@ -218,12 +218,6 @@ function AppRoutes() {
             <Route path="/dm/utilization"    element={<Placeholder title="Cross-Project Util" />} />
             <Route path="/dm/reports"        element={<Placeholder title="Reports" />} />
 
-            {/* ── HR Admin ───────────────────────────── */}
-            <Route path="/hr/dashboard" element={<Placeholder title="HR Dashboard" />} />
-            <Route path="/hr/activity"  element={<Placeholder title="Activity & Compliance" />} />
-            <Route path="/hr/leave"     element={<Placeholder title="Leave Alignment" />} />
-            <Route path="/hr/reports"   element={<Placeholder title="Reports" />} />
-
             {/* ── Finance Admin ──────────────────────── */}
             <Route path="/finance/dashboard"     element={<Placeholder title="Finance Dashboard" />} />
             <Route path="/finance/billable"      element={<Placeholder title="Billable Data" />} />
@@ -236,27 +230,25 @@ function AppRoutes() {
             <Route path="/leadership/teams"     element={<Placeholder title="Team Rankings" />} />
             <Route path="/leadership/reports"   element={<Placeholder title="Reports" />} />
 
-            {/* ── Super Admin ────────────────────────── */}
+            {/* ── Admin (user administration) ───────── */}
             <Route path="/admin/dashboard"    element={<AdminDashboard />} />
             <Route path="/admin/users"        element={<UserManagement />} />
             <Route path="/admin/roles"        element={<RolesAccess />} />
+            <Route path="/admin/audit"        element={<AuditLog />} />
+
+            {/* ── Super Admin (executive oversight) ──── */}
+            <Route path="/admin/executive-dashboard" element={<ExecutiveDashboard />} />
+
+            {/* ── Super Admin (system configuration) ─── */}
             <Route path="/admin/org-masters"  element={<OrganizationMasters />} />
             <Route path="/admin/rules"        element={<BusinessRules />} />
             <Route path="/admin/integrations" element={<Placeholder title="Integrations" />} />
             <Route path="/admin/ai"           element={<Placeholder title="AI & Automation" />} />
-            <Route path="/admin/audit"        element={<AuditLog />} />
 
-            {/* ── Super Admin Reportee Views ──────────── */}
+            {/* ── Super Admin Reportee Views (Project Manager Views only) ── */}
             <Route path="/admin/reportee/pm/projects"      element={<ReporteePmProjects />} />
-            <Route path="/admin/reportee/pm/allocation"    element={<ReporteePmAllocation />} />
             <Route path="/admin/reportee/pm/eod"           element={<ReporteePmEod />} />
             <Route path="/admin/reportee/pm/utilization"   element={<ReporteePmUtilization />} />
-            <Route path="/admin/reportee/pm/reports"       element={<ReporteePmReports />} />
-            <Route path="/admin/reportee/lead/projects"    element={<MyProjects />} />
-            <Route path="/admin/reportee/lead/allocation"  element={<ReporteeLeadAllocation />} />
-            <Route path="/admin/reportee/lead/eod"         element={<ReporteeLeadEod />} />
-            <Route path="/admin/reportee/lead/utilization" element={<TeamUtilization />} />
-            <Route path="/admin/reportee/lead/reports"     element={<ReporteeLeadReports />} />
 
             {/* ── Shared ─────────────────────────────── */}
             <Route path="/notifications"   element={<Notifications />} />

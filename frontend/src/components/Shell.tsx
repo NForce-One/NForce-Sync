@@ -441,7 +441,7 @@ function NavLinkItem({ item, isActive, badge, indent, onNavClick }: {
   );
 }
 
-/** An expandable "Project Manager Views" / "Team Lead Views"-style parent row — a button, not a
+/** An expandable "Project Manager Views"-style parent row — a button, not a
  *  Link (it has no page of its own), with a chevron that rotates to reflect expanded/collapsed
  *  state. Its own active-state isn't tracked here; each child highlights itself when active. */
 function NavGroupRow({ label, icon: Icon, expanded, onToggle }: {
@@ -464,11 +464,12 @@ function NavGroupRow({ label, icon: Icon, expanded, onToggle }: {
         border: 'none',
         background: 'transparent',
         cursor: 'pointer',
+        font: 'inherit',
         fontSize: 13,
         fontWeight: 450,
+        lineHeight: 'normal',
         textAlign: 'left',
         color: 'inherit',
-        font: 'inherit',
       }}
     >
       <Icon size={17} style={{ flex: 'none', opacity: 0.8 }} aria-hidden="true" />
@@ -1003,11 +1004,11 @@ export function Shell() {
                   <AvatarContent photo={photo} initials={user!.initials} />
                 </button>
 
-                {/* Super Admin shield badge — sibling of button, outside its grid context */}
-                {role === 'superadmin' && (
+                {/* Super Admin / Admin shield badge — sibling of button, outside its grid context */}
+                {(role === 'superadmin' || role === 'admin') && (
                   <span
-                    aria-label="Super Admin session"
-                    title="Super Admin"
+                    aria-label={role === 'superadmin' ? 'Super Admin session' : 'Admin session'}
+                    title={role === 'superadmin' ? 'Super Admin' : 'Admin'}
                     style={{
                       position: 'absolute',
                       bottom: -1,
@@ -1015,13 +1016,13 @@ export function Shell() {
                       width: 14,
                       height: 14,
                       borderRadius: '50%',
-                      background: '#1C0709',
-                      border: '1.5px solid #3D0D15',
+                      background: role === 'superadmin' ? '#1C0709' : '#161A3D',
+                      border: role === 'superadmin' ? '1.5px solid #3D0D15' : '1.5px solid #2A2F6B',
                       display: 'grid',
                       placeItems: 'center',
                     }}
                   >
-                    <Shield size={8} color="#E4373D" aria-hidden="true" />
+                    <Shield size={8} color={role === 'superadmin' ? '#E4373D' : '#6366F1'} aria-hidden="true" />
                   </span>
                 )}
               </div>{/* end 32×32 wrapper */}

@@ -15,7 +15,6 @@ final class EodAccessPolicy {
         if (entry.getEmployee().getId().equals(actor.getId())) return true;
         return actor.getRole() == AppUser.Role.MANAGER
             || actor.getRole() == AppUser.Role.SUPERADMIN
-            || actor.getRole() == AppUser.Role.HR
             || actor.getRole() == AppUser.Role.DM
             || actor.getRole() == AppUser.Role.LEADERSHIP;
     }

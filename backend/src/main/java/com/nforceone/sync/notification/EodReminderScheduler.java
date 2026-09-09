@@ -69,7 +69,7 @@ public class EodReminderScheduler {
             EodEntry.Status.DRAFT, EodEntry.Status.REJECTED, EodEntry.Status.MISSED);
 
     /**
-     * The only roles that submit an EOD. Everyone else — PM, DM, HR, FINANCE, LEADERSHIP,
+     * The only roles that submit an EOD. Everyone else — PM, DM, FINANCE, LEADERSHIP,
      * SUPERADMIN — reviews or reports on EODs rather than filing one, so telling them "your EOD is
      * overdue" was always wrong, even when they held a shift and a project allocation.
      */
@@ -147,7 +147,7 @@ public class EodReminderScheduler {
 
     private int remindShift(ShiftDefinition shift, LocalDate workDate, LocalDateTime cutoffAt) {
         // Holding a shift is not the same as owing an EOD. Shift membership alone reminded every
-        // active account on the shift regardless of role — PMs, HR, even a read-only Leadership
+        // active account on the shift regardless of role — PMs, even a read-only Leadership
         // viewer — to submit "your EOD". Only employees and team leads file one.
         List<AppUser> members = userRepository.findByShiftIdAndStatusAndDeletedAtIsNull(
                         shift.getId(), AppUser.Status.ACTIVE).stream()

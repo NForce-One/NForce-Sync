@@ -247,8 +247,25 @@ function FilterBar({
   const { data: filterOptions } = useProjectDashboardFilters();
 
   function set<K extends keyof Filters>(key: K, value: Filters[K]) {
+    // Project is dependent on Client — a Client change (including clearing it) invalidates
+    // whatever project was previously chosen, since it may not belong to the new Client.
+    if (key === 'client') {
+      onChange({ ...filters, client: value as string, projectId: '' });
+      return;
+    }
     onChange({ ...filters, [key]: value });
   }
+
+  // The Project dropdown only ever offers projects under the selected Client. Untouched ('')
+  // disables the control entirely; ALL and NO_CLIENT are real (if broad) selections that unlock it.
+  const allProjects = filterOptions?.projects ?? [];
+  const projectsForClient = filters.client === ''
+    ? []
+    : filters.client === ALL
+      ? allProjects
+      : filters.client === NO_CLIENT
+        ? allProjects.filter(p => !p.client)
+        : allProjects.filter(p => p.client === filters.client);
 
   // Neither end may be in the future — an EOD report only covers days that have happened.
   // From is additionally bounded by To; To is itself capped at today, so this is the earlier one.
@@ -275,18 +292,8 @@ function FilterBar({
           <DatePicker value={filters.to} onChange={v => set('to', v)} min={filters.from} max={today} inputStyle={inputStyle()} quickNav clearable />
         </label>
         {/* Each select opens on a masked placeholder (disabled, so it cannot be re-picked once
-            you have chosen), with the "All …" catch-all still available underneath. */}
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <FieldLabel>Project</FieldLabel>
-          <FilterSelect
-            value={filters.projectId} onChange={v => set('projectId', v)}
-            style={selectStyle(filters.projectId)} label="project"
-          >
-            <option value="" disabled>Select Project…</option>
-            <option style={OPTION_STYLE} value={ALL}>All projects</option>
-            {(filterOptions?.projects ?? []).map(p => <option style={OPTION_STYLE} key={p.id} value={p.id}>{p.name}</option>)}
-          </FilterSelect>
-        </label>
+            you have chosen), with the "All …" catch-all still available underneath. Client comes
+            first: Project is dependent on it, so it stays disabled until a Client is picked. */}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <FieldLabel>Client</FieldLabel>
           <FilterSelect
@@ -298,6 +305,18 @@ function FilterBar({
             {/* Internal work has no client by design — this is the only way to isolate it. */}
             <option style={OPTION_STYLE} value={NO_CLIENT}>W/O Client</option>
             {(filterOptions?.clients ?? []).map(c => <option style={OPTION_STYLE} key={c} value={c}>{c}</option>)}
+          </FilterSelect>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <FieldLabel>Project</FieldLabel>
+          <FilterSelect
+            value={filters.projectId} onChange={v => set('projectId', v)}
+            style={selectStyle(filters.projectId)} label="project"
+            disabled={filters.client === ''}
+          >
+            <option value="" disabled>{filters.client === '' ? 'Select a Client first…' : 'Select Project…'}</option>
+            <option style={OPTION_STYLE} value={ALL}>All projects</option>
+            {projectsForClient.map(p => <option style={OPTION_STYLE} key={p.id} value={p.id}>{p.name}</option>)}
           </FilterSelect>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

@@ -2,7 +2,7 @@ import {
   LayoutDashboard, ClipboardList, BarChart3, Activity,
   Bell, User, ClipboardCheck, AlertOctagon,
   FolderKanban, Users, TrendingUp, Map,
-  AlertTriangle, CalendarDays, DollarSign, Trophy,
+  AlertTriangle, DollarSign, Trophy,
   Lock, Settings, Plug, Bot, ScrollText, Building2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -72,9 +72,9 @@ export const ROLE_COLORS: Record<Role, string> = {
   lead:       '#2FB67C',
   pm:         '#E0A93B',
   dm:         '#9B6DFF',
-  hr:         '#E4373D',
   finance:    '#14B8A6',
   leadership: '#F09030',
+  admin:      '#6366F1',
   superadmin: '#A78BFA',
 };
 
@@ -83,14 +83,14 @@ export const ROLE_LABELS: Record<Role, string> = {
   lead:       'Team Lead',
   pm:         'Project Manager',
   dm:         'Delivery Manager',
-  hr:         'HR Admin',
   finance:    'Finance Admin',
   leadership: 'Leadership Viewer',
+  admin:      'Admin',
   superadmin: 'Super Admin',
 };
 
 export const ALL_ROLES: Role[] = [
-  'employee', 'lead', 'pm', 'dm', 'hr', 'finance', 'leadership', 'superadmin',
+  'employee', 'lead', 'pm', 'dm', 'finance', 'leadership', 'admin', 'superadmin',
 ];
 
 export const NAV: Record<Role, RoleNav> = {
@@ -225,25 +225,6 @@ export const NAV: Record<Role, RoleNav> = {
     },
   ],
 
-  hr: [
-    {
-      section: 'People',
-      items: [
-        { key: 'hr-dash',     label: 'HR Dashboard',          path: '/hr/dashboard', icon: LayoutDashboard },
-        { key: 'hr-activity', label: 'Activity & Compliance',  path: '/hr/activity',  icon: Users },
-        { key: 'hr-leave',    label: 'Leave Alignment',        path: '/hr/leave',     icon: CalendarDays },
-      ],
-    },
-    {
-      section: 'More',
-      items: [
-        { key: 'reports',       label: 'Reports',        path: '/hr/reports',    icon: BarChart3 },
-        { key: 'notifications', label: 'Notifications', path: '/notifications', icon: Bell },
-        { key: 'profile',       label: 'Profile',        path: '/profile',       icon: User },
-      ],
-    },
-  ],
-
   finance: [
     {
       section: 'Billing',
@@ -281,50 +262,77 @@ export const NAV: Record<Role, RoleNav> = {
     },
   ],
 
-  superadmin: [
+  // Admin owns user administration — split off from Super Admin (see the Reportee Views
+  // block below for Super Admin's system-wide operational visibility). Organization Masters is
+  // additionally shared with Admin (Department/Designation/Location/Project Type are attributes
+  // on a user record, so Admin manages them as part of user administration too — see
+  // OrgController, now hasAnyRole('SUPERADMIN','ADMIN') on writes). Admin does not get Business
+  // Rules/Integrations/AI (system/business-level config that remains Super Admin's), and does
+  // not get Reportee Views (operational oversight, not user-administration).
+  admin: [
     {
       section: 'Administration',
       items: [
-        { key: 'admin-dash',     label: 'Admin Dashboard',  path: '/admin/dashboard',   icon: LayoutDashboard },
-        { key: 'user-mgmt',      label: 'User Management',  path: '/admin/users',        icon: Users },
-        { key: 'role-mgmt',      label: 'Roles & Access',       path: '/admin/roles',        icon: Lock },
+        { key: 'admin-dash',   label: 'Admin Dashboard',      path: '/admin/dashboard',    icon: LayoutDashboard },
+        { key: 'user-mgmt',    label: 'User Management',      path: '/admin/users',        icon: Users },
+        { key: 'org-masters',  label: 'Organization Masters', path: '/admin/org-masters',  icon: Building2 },
+        { key: 'role-mgmt',    label: 'Roles & Access',       path: '/admin/roles',        icon: Lock },
+        { key: 'audit',        label: 'Audit Log',            path: '/admin/audit',        icon: ScrollText },
+      ],
+    },
+    {
+      section: 'More',
+      items: [
+        { key: 'notifications', label: 'Notifications', path: '/notifications', icon: Bell },
+        { key: 'profile',       label: 'Profile',        path: '/profile',       icon: User },
+      ],
+    },
+  ],
+
+  superadmin: [
+    {
+      // Super Admin's primary landing surface — organization-wide executive oversight
+      // (workforce/projects/EOD/utilization/allocation), distinct from Admin's user-
+      // administration-focused Admin Dashboard.
+      section: 'Executive / Organization',
+      items: [
+        { key: 'exec-dash', label: 'Executive Dashboard', path: '/admin/executive-dashboard', icon: LayoutDashboard },
+      ],
+    },
+    {
+      // User administration (Admin Dashboard, User Management, Roles & Access, Audit Log) has
+      // moved to the Admin role. Super Admin keeps system/business-level configuration.
+      section: 'Administration',
+      items: [
         { key: 'org-masters',    label: 'Organization Masters', path: '/admin/org-masters',  icon: Building2 },
         { key: 'business-rules', label: 'Business Rules',       path: '/admin/rules',        icon: Settings },
         { key: 'integrations',   label: 'Integrations',     path: '/admin/integrations', icon: Plug, phase: 2 },
         { key: 'ai-settings',    label: 'AI & Automation',  path: '/admin/ai',           icon: Bot, phase: 3 },
-        { key: 'audit',          label: 'Audit Log',        path: '/admin/audit',        icon: ScrollText },
       ],
     },
     {
-      // Read-only, system-wide visibility into the operational views Project Managers and Team
-      // Leads use day to day — reuses their exact page components/business logic (each already
-      // resolves a SUPERADMIN caller to system-wide data server-side; see ApprovalService/
-      // TeamLeadService/ProjectDashboardService/AllocationService's SUPERADMIN branches), at
-      // dedicated /admin/reportee/* routes rather than the PM/Team Lead's own paths, so each has
-      // its own URL for direct-link/refresh/active-highlighting purposes. Does not change PM/Team
-      // Lead workflow ownership: write actions remain scoped to their existing owners, and
-      // Blockers/Approvals are deliberately excluded from both groups (out of scope for this
-      // visibility-only enhancement — see the Super Admin Reportee Views spec).
+      // Read-only, system-wide visibility into the operational views Project Managers use day to
+      // day — reuses their exact page components/business logic (already resolves a SUPERADMIN
+      // caller to system-wide data server-side; see ProjectDashboardService/AllocationService's
+      // SUPERADMIN branches), at dedicated /admin/reportee/* routes rather than the PM's own
+      // paths, so each has its own URL for direct-link/refresh/active-highlighting purposes.
+      // Does not change PM workflow ownership: write actions remain scoped to their existing
+      // owners. Blockers/Approvals/Reports are deliberately excluded (out of scope for this
+      // visibility-only enhancement — see the Super Admin Reportee Views spec). Team Lead Views
+      // was removed from here — Super Admin no longer has a Reportee Views entry point into
+      // Team Lead's operational pages; Team Lead's own navigation/permissions are unaffected.
       section: 'Reportee Views',
       items: [
         {
           key: 'ro-pm-group', label: 'Project Manager Views', icon: FolderKanban,
           children: [
-            { key: 'ro-pm-projects', label: 'Projects',            path: '/admin/reportee/pm/projects',    icon: FolderKanban },
-            { key: 'ro-pm-alloc',    label: 'Resource Allocation',  path: '/admin/reportee/pm/allocation',  icon: Users },
+            // Projects and Resource Allocation were separate sidebar entries but opened the
+            // same page (ProjectsAllocation, which already has its own internal Projects/
+            // Allocation tabs) — consolidated into one entry, matching PM's own single
+            // "Projects & Allocation" nav item.
+            { key: 'ro-pm-projects', label: 'Projects & Allocation', path: '/admin/reportee/pm/projects',    icon: FolderKanban },
             { key: 'ro-pm-eod',      label: 'EOD',                  path: '/admin/reportee/pm/eod',         icon: ClipboardList },
             { key: 'ro-pm-util',     label: 'Utilization',          path: '/admin/reportee/pm/utilization', icon: Activity },
-            { key: 'ro-pm-reports',  label: 'Reports',              path: '/admin/reportee/pm/reports',     icon: BarChart3 },
-          ],
-        },
-        {
-          key: 'ro-lead-group', label: 'Team Lead Views', icon: Users,
-          children: [
-            { key: 'ro-lead-projects', label: 'My Projects',         path: '/admin/reportee/lead/projects',    icon: FolderKanban },
-            { key: 'ro-lead-alloc',    label: 'Resource Allocation',  path: '/admin/reportee/lead/allocation',  icon: Users },
-            { key: 'ro-lead-eod',      label: 'EOD',                  path: '/admin/reportee/lead/eod',         icon: ClipboardList },
-            { key: 'ro-lead-util',     label: 'Utilization',          path: '/admin/reportee/lead/utilization', icon: Activity },
-            { key: 'ro-lead-reports',  label: 'Reports',              path: '/admin/reportee/lead/reports',     icon: BarChart3 },
           ],
         },
       ],

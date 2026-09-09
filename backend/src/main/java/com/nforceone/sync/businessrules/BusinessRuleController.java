@@ -64,7 +64,10 @@ public class BusinessRuleController {
 
     // ── Shift timings ───────────────────────────────────────────────────────────
 
+    // Also readable by Admin: the Create/Edit User form's optional Shift dropdown needs this
+    // list, and Admin (not Super Admin) now owns user administration.
     @GetMapping("/shifts")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public List<ShiftDefinitionDto> listShifts() {
         return businessRuleService.listShifts();
     }

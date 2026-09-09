@@ -18,9 +18,11 @@ import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;
 
+// Audit trail of account-administration actions (user CRUD, status/role/password changes) —
+// owned by Admin, the role now responsible for those actions.
 @RestController
 @RequestMapping("/api/audit")
-@PreAuthorize("hasRole('SUPERADMIN')")
+@PreAuthorize("hasRole('ADMIN')")
 public class AuditLogController {
 
     private final AuditLogRepository auditLogRepository;

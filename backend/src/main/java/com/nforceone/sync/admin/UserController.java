@@ -16,9 +16,13 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+// User administration (create/update/activate/deactivate/reset-password/delete) is owned by
+// the Admin role — split off from Super Admin, which retains system-wide operational
+// oversight but no longer performs user-account administration. See UserService for the
+// role-assignment rules (Admin cannot grant SUPERADMIN itself — see CREATABLE_ROLES).
 @RestController
 @RequestMapping("/api/users")
-@PreAuthorize("hasRole('SUPERADMIN')")
+@PreAuthorize("hasRole('ADMIN')")
 public class UserController {
 
     private final UserService userService;

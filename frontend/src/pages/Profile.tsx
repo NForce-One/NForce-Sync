@@ -15,9 +15,9 @@ const ROLE_LABELS: Record<string, string> = {
   MANAGER:    'Team Lead',
   PM:         'Project Manager',
   DM:         'Delivery Manager',
-  HR:         'HR Admin',
   FINANCE:    'Finance Admin',
   LEADERSHIP: 'Leadership Viewer',
+  ADMIN:      'Admin',
   SUPERADMIN: 'Super Admin',
 };
 

@@ -6,6 +6,8 @@ import { api } from './client';
 export interface ProjectOptionDto {
   id: number;
   name: string;
+  /** Null for internal work — a project with no client by design. */
+  client: string | null;
 }
 
 export interface EmployeeOptionDto {

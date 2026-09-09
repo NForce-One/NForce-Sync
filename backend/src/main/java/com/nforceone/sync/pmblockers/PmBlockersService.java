@@ -60,7 +60,7 @@ public class PmBlockersService {
                 .collect(Collectors.toMap(Project::getId, p -> p, (a, b) -> a));
         List<ProjectOptionDto> projectOptions = projectsWithBlockers.values().stream()
                 .sorted(Comparator.comparing(Project::getName))
-                .map(p -> new ProjectOptionDto(p.getId(), p.getName()))
+                .map(p -> new ProjectOptionDto(p.getId(), p.getName(), p.getClient()))
                 .toList();
 
         Map<Long, AppUser> managersById = tasks.stream()

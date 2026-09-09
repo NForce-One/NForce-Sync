@@ -715,8 +715,7 @@ public class EodService {
 
     private Long resolveTargetEmployee(AppUser actor, Long requestedId) {
         boolean isPrivileged = actor.getRole() == AppUser.Role.MANAGER
-                || actor.getRole() == AppUser.Role.SUPERADMIN
-                || actor.getRole() == AppUser.Role.HR;
+                || actor.getRole() == AppUser.Role.SUPERADMIN;
         if (!isPrivileged) {
             return actor.getId();
         }

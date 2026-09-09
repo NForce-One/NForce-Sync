@@ -3,9 +3,9 @@ export type Role =
   | 'lead'
   | 'pm'
   | 'dm'
-  | 'hr'
   | 'finance'
   | 'leadership'
+  | 'admin'
   | 'superadmin';
 
 export type EodStatus =

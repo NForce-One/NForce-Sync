@@ -31,4 +31,33 @@ public interface UtilSnapshotRepository extends JpaRepository<UtilSnapshot, Long
     List<UtilSnapshot> findByEmployeeIdInAndSnapshotDateBetween(@Param("employeeIds") List<Long> employeeIds,
                                                                  @Param("from") LocalDate from,
                                                                  @Param("to") LocalDate to);
+
+    // ── Super Admin Executive Dashboard aggregates ──────────────────────────────
+    // These read only PERSISTED snapshot rows (written by UtilizationService.computeSnapshot on
+    // EOD approval) — a day nobody ever submitted/approved an EOD for contributes no row, so it
+    // is correctly excluded from these totals rather than fabricated as 0. Reuses the exact same
+    // persisted values UtilizationCalculator already computed; no new formula.
+
+    /** [SUM(approvedProductiveHours), SUM(availableHours)] — one row, nulls if no snapshot exists. */
+    @Query("SELECT SUM(s.approvedProductiveHours), SUM(s.availableHours) FROM UtilSnapshot s " +
+           "WHERE s.employeeId IN :employeeIds AND s.snapshotDate BETWEEN :from AND :to")
+    List<Object[]> sumHoursInRange(@Param("employeeIds") List<Long> employeeIds,
+                                    @Param("from") LocalDate from,
+                                    @Param("to") LocalDate to);
+
+    /** [employeeId, AVG(utilizationPct)] per employee over the range — for top/bottom ranking and thresholds. */
+    @Query("SELECT s.employeeId, AVG(s.utilizationPct) FROM UtilSnapshot s " +
+           "WHERE s.employeeId IN :employeeIds AND s.snapshotDate BETWEEN :from AND :to " +
+           "AND s.utilizationPct IS NOT NULL GROUP BY s.employeeId")
+    List<Object[]> avgUtilizationByEmployeeInRange(@Param("employeeIds") List<Long> employeeIds,
+                                                    @Param("from") LocalDate from,
+                                                    @Param("to") LocalDate to);
+
+    /** [snapshotDate, AVG(utilizationPct)] per day over the range — for the org utilization trend chart. */
+    @Query("SELECT s.snapshotDate, AVG(s.utilizationPct) FROM UtilSnapshot s " +
+           "WHERE s.employeeId IN :employeeIds AND s.snapshotDate BETWEEN :from AND :to " +
+           "AND s.utilizationPct IS NOT NULL GROUP BY s.snapshotDate ORDER BY s.snapshotDate ASC")
+    List<Object[]> avgUtilizationByDateInRange(@Param("employeeIds") List<Long> employeeIds,
+                                                @Param("from") LocalDate from,
+                                                @Param("to") LocalDate to);
 }

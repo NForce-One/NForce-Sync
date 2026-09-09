@@ -12,7 +12,7 @@ import { X } from 'lucide-react';
  * so a long option label can never run underneath it.
  */
 export function FilterSelect({
-  value, onChange, style, label, children,
+  value, onChange, style, label, children, disabled,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -21,6 +21,8 @@ export function FilterSelect({
   /** Names the field for assistive tech, e.g. "project" -> "Clear project". */
   label: string;
   children: React.ReactNode;
+  /** Blocks interaction while a dependency (e.g. a parent dropdown) hasn't been chosen yet. */
+  disabled?: boolean;
 }) {
   const isSet = value !== '';
 
@@ -29,11 +31,15 @@ export function FilterSelect({
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        style={{ ...style, paddingRight: isSet ? 46 : style?.paddingRight }}
+        disabled={disabled}
+        style={{
+          ...style, paddingRight: isSet ? 46 : style?.paddingRight,
+          opacity: disabled ? 0.6 : 1, cursor: disabled ? 'not-allowed' : style?.cursor,
+        }}
       >
         {children}
       </select>
-      {isSet && (
+      {isSet && !disabled && (
         <button
           type="button"
           aria-label={`Clear ${label}`}

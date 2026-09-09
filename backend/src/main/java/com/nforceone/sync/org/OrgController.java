@@ -7,6 +7,12 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+// Organization Masters — Department/Designation/Location/ProjectType master data. Reads are
+// open to any authenticated user (needed by user/project forms' dropdowns); writes are shared
+// between SUPERADMIN (system-level configuration) and ADMIN (who also manages Organization
+// Masters as part of user administration — e.g. Department/Designation/Location are attributes
+// on a user record). Both roles use the exact same endpoints/service/data — no separate
+// Admin-specific logic or duplicated master records.
 @RestController
 @RequestMapping("/api/org")
 public class OrgController {
@@ -28,20 +34,20 @@ public class OrgController {
 
     @PostMapping("/project-types")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public ProjectTypeDto createProjectType(@Valid @RequestBody CreateProjectTypeRequest request) {
         return orgService.createProjectType(request);
     }
 
     @PatchMapping("/project-types/{id}")
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public ProjectTypeDto toggleProjectType(@PathVariable Long id) {
         return orgService.toggleProjectType(id);
     }
 
     @DeleteMapping("/project-types/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public void deleteProjectType(@PathVariable Long id) {
         orgService.deleteProjectType(id);
     }
@@ -56,20 +62,20 @@ public class OrgController {
 
     @PostMapping("/departments")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public DepartmentDto createDepartment(@Valid @RequestBody CreateDepartmentRequest request) {
         return orgService.createDepartment(request);
     }
 
     @PatchMapping("/departments/{id}")
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public DepartmentDto toggleDepartment(@PathVariable Long id) {
         return orgService.toggleDepartment(id);
     }
 
     @DeleteMapping("/departments/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public void deleteDepartment(@PathVariable Long id) {
         orgService.deleteDepartment(id);
     }
@@ -84,20 +90,20 @@ public class OrgController {
 
     @PostMapping("/designations")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public DesignationDto createDesignation(@Valid @RequestBody CreateDesignationRequest request) {
         return orgService.createDesignation(request);
     }
 
     @PatchMapping("/designations/{id}")
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public DesignationDto toggleDesignation(@PathVariable Long id) {
         return orgService.toggleDesignation(id);
     }
 
     @DeleteMapping("/designations/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public void deleteDesignation(@PathVariable Long id) {
         orgService.deleteDesignation(id);
     }
@@ -112,20 +118,20 @@ public class OrgController {
 
     @PostMapping("/locations")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public OrgLocationDto createLocation(@Valid @RequestBody CreateLocationRequest request) {
         return orgService.createLocation(request);
     }
 
     @PatchMapping("/locations/{id}")
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public OrgLocationDto toggleLocation(@PathVariable Long id) {
         return orgService.toggleLocation(id);
     }
 
     @DeleteMapping("/locations/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @PreAuthorize("hasRole('SUPERADMIN')")
+    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public void deleteLocation(@PathVariable Long id) {
         orgService.deleteLocation(id);
     }

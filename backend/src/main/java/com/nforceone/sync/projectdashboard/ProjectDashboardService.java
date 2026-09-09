@@ -92,7 +92,7 @@ public class ProjectDashboardService {
         List<Long> projectIds = projects.stream().map(Project::getId).toList();
 
         List<ProjectOptionDto> projectOptions = projects.stream()
-                .map(p -> new ProjectOptionDto(p.getId(), p.getName()))
+                .map(p -> new ProjectOptionDto(p.getId(), p.getName(), p.getClient()))
                 .toList();
 
         if (projectIds.isEmpty()) {

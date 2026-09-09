@@ -30,17 +30,22 @@ import { focusNextOnEnter } from '../../lib/formFocus';
 
 // Only these five roles are offered on Add/Edit User — the backend rejects any other role on
 // create, and on update unless the user already holds it (see UserService.CREATABLE_ROLES).
+// HR no longer exists as a role at all (removed from AppUser.Role entirely — see
+// LEGACY_ROLE_LABELS below for the roles that ARE still legacy-held); Super Admin IS offered —
+// Admin is the role responsible for assigning it (per the current role/hierarchy design).
 const ROLE_OPTIONS = [
   { label: 'Employee',        value: 'EMPLOYEE' },
   { label: 'Team Lead',       value: 'MANAGER' },
-  { label: 'HR Admin',        value: 'HR' },
-  { label: 'Super Admin',     value: 'SUPERADMIN' },
   { label: 'Project Manager', value: 'PM' },
+  { label: 'Admin',           value: 'ADMIN' },
+  { label: 'Super Admin',     value: 'SUPERADMIN' },
 ];
 
-// Labels for legacy roles (Delivery Manager, Finance Admin, Leadership Viewer) that are no
-// longer creatable/selectable but may still belong to an existing user — used only so the Edit
-// User Role dropdown can display a legacy role it isn't otherwise offering as a choice.
+// Labels for legacy/protected roles that are no longer creatable/selectable but may still
+// belong to an existing user — used only so the Edit User Role dropdown can display a role
+// it isn't otherwise offering as a choice. Delivery Manager/Finance Admin/Leadership Viewer are
+// deprecated roles. HR is not listed here — it no longer exists as a role at all (removed from
+// AppUser.Role entirely; existing HR users were migrated to Employee).
 const LEGACY_ROLE_LABELS: Record<string, string> = {
   DM: 'Delivery Manager',
   FINANCE: 'Finance Admin',
@@ -61,21 +66,20 @@ const WORK_MODES = [
   { value: 'REMOTE', label: 'Remote' },
 ];
 
-// Mirrors the backend hierarchy (UserService.REQUIRED_MANAGER_ROLE): an Employee's
-// Reporting Manager must be a Team Lead, a Team Lead's must be a Project Manager,
-// a Project Manager's and an HR Admin's must be a Super Admin. A Super Admin sits at
-// the top of the org and may optionally report to another Super Admin.
-// Roles not listed here keep the prior behavior (Team Leads offered as the option).
+// Mirrors the backend hierarchy (UserService.REQUIRED_MANAGER_ROLE) — the source of truth:
+// Employee -> Team Lead, Team Lead -> Project Manager, Project Manager -> Super Admin,
+// Admin -> Super Admin. A Super Admin sits at the top and may optionally report to another
+// Super Admin.
 const REPORTING_MANAGER_ROLE_FOR: Record<string, string> = {
   EMPLOYEE: 'MANAGER',
   MANAGER: 'PM',
   PM: 'SUPERADMIN',
-  HR: 'SUPERADMIN',
+  ADMIN: 'SUPERADMIN',
   SUPERADMIN: 'SUPERADMIN',
 };
 
 // Reporting Manager is mandatory for these roles — Super Admin remains optional.
-const MANDATORY_MANAGER_ROLES = ['EMPLOYEE', 'MANAGER', 'HR', 'PM'];
+const MANDATORY_MANAGER_ROLES = ['EMPLOYEE', 'MANAGER', 'PM', 'ADMIN'];
 
 function reportingManagerRoleFilter(role: string): string | null {
   return REPORTING_MANAGER_ROLE_FOR[role] ?? (role ? 'MANAGER' : null);
@@ -865,8 +869,8 @@ function AddModal({
 
           {/* Reporting Manager — full width. Options are filtered by the selected Role (see
               reportingManagerRoleFilter); the backend enforces the same hierarchy
-              independently of this dropdown. Required for Employee/Team Lead/HR Admin/
-              Project Manager; optional for Super Admin (who may report to another
+              independently of this dropdown. Required for Employee/Team Lead/Project Manager/
+              Admin; optional for Super Admin (who may report to another
               Super Admin, or to no one). */}
           <div style={{ gridColumn: '1/-1' }}>
             <Field label={managerRequired ? 'Reporting Manager *' : 'Reporting Manager'}>
@@ -1101,8 +1105,8 @@ function EditModal({
 
           {/* Reporting Manager — full width. Options are filtered by the selected Role (see
               reportingManagerRoleFilter); the backend enforces the same hierarchy
-              independently of this dropdown. Required for Employee/Team Lead/HR Admin/
-              Project Manager; optional for Super Admin (who may report to another
+              independently of this dropdown. Required for Employee/Team Lead/Project Manager/
+              Admin; optional for Super Admin (who may report to another
               Super Admin, or to no one). */}
           <div style={{ gridColumn: '1/-1' }}>
             <Field label={managerRequired ? 'Reporting Manager *' : 'Reporting Manager'}>

@@ -74,10 +74,12 @@ export const ROLE_LANDING: Record<Role, string> = {
   lead:       '/team/dashboard',
   pm:         '/projects/dashboard',
   dm:         '/dm/dashboard',
-  hr:         '/hr/dashboard',
   finance:    '/finance/dashboard',
   leadership: '/leadership/dashboard',
-  superadmin: '/admin/dashboard',
+  admin:      '/admin/dashboard',
+  // Super Admin no longer owns the Admin Dashboard (user-administration stats) — it lands on
+  // its own Executive Dashboard (organization-wide oversight) instead.
+  superadmin: '/admin/executive-dashboard',
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);

@@ -29,7 +29,7 @@ public class AppUser {
     @Column(nullable = false, length = 20)
     private Role role;
 
-    // Manually entered by Super Admin at creation, format NF-##### — validated in
+    // Manually entered by Admin at creation, format NF-##### — validated in
     // CreateUserRequest/UserService; DB CHECK constraint enforces the format too.
     @Column(name = "employee_code", nullable = false, unique = true, length = 20)
     private String employeeCode;
@@ -111,7 +111,7 @@ public class AppUser {
     private String photoData;
 
     public enum Role {
-        EMPLOYEE, MANAGER, HR, SUPERADMIN, PM, DM, FINANCE, LEADERSHIP
+        EMPLOYEE, MANAGER, SUPERADMIN, PM, DM, FINANCE, LEADERSHIP, ADMIN
     }
 
     public enum Status {

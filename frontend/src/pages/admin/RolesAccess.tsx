@@ -6,13 +6,18 @@ import { ROLE_COLORS, ROLE_LABELS } from '../../lib/nav';
 
 // ── Data derived from grep -rn "@PreAuthorize" backend/src ────────────────────
 //
-// Only these three tiers are enforced at the API (Spring Security @PreAuthorize).
-// All other role distinctions — TEAMLEAD, HR, DM, FINANCE, LEADERSHIP — are
+// Only these tiers are enforced at the API (Spring Security @PreAuthorize).
+// All other role distinctions — TEAMLEAD, DM, FINANCE, LEADERSHIP — are
 // enforced by the frontend routing layer only (nav.ts + Shell access guard).
+//
+// User administration (user CRUD, audit log, role info, admin stats) is owned by Admin —
+// split off from Super Admin, which keeps system-wide operational oversight (business rules,
+// org masters, Reportee Views) but can no longer perform user-administration actions, at
+// either layer.
 //
 // This page is READ-ONLY. Permissions are code-defined and cannot be changed here.
 
-const ROLE_ORDER = ['EMPLOYEE', 'TEAMLEAD', 'PM', 'DM', 'HR', 'FINANCE', 'LEADERSHIP', 'SUPERADMIN'];
+const ROLE_ORDER = ['EMPLOYEE', 'TEAMLEAD', 'PM', 'DM', 'FINANCE', 'LEADERSHIP', 'ADMIN', 'SUPERADMIN'];
 
 interface PermRow {
   label: string;
@@ -30,10 +35,10 @@ const GROUPS: PermGroup[] = [
   {
     label: 'Authenticated — all roles',
     rows: [
-      { label: 'Submit & view own EOD',       endpoint: 'POST /api/eod, GET /api/eod',           roles: ['EMPLOYEE','TEAMLEAD','PM','DM','HR','FINANCE','LEADERSHIP','SUPERADMIN'], tier: 'api' },
-      { label: 'View / approve EOD entries',  endpoint: 'GET /api/approvals/pending',             roles: ['EMPLOYEE','TEAMLEAD','PM','DM','HR','FINANCE','LEADERSHIP','SUPERADMIN'], tier: 'api' },
-      { label: 'Read org masters',            endpoint: 'GET /api/org/*',                         roles: ['EMPLOYEE','TEAMLEAD','PM','DM','HR','FINANCE','LEADERSHIP','SUPERADMIN'], tier: 'api' },
-      { label: 'Profile & Notifications',     endpoint: 'GET /api/users/me, GET /api/notifications', roles: ['EMPLOYEE','TEAMLEAD','PM','DM','HR','FINANCE','LEADERSHIP','SUPERADMIN'], tier: 'api' },
+      { label: 'Submit & view own EOD',       endpoint: 'POST /api/eod, GET /api/eod',           roles: ['EMPLOYEE','TEAMLEAD','PM','DM','FINANCE','LEADERSHIP','ADMIN','SUPERADMIN'], tier: 'api' },
+      { label: 'View / approve EOD entries',  endpoint: 'GET /api/approvals/pending',             roles: ['EMPLOYEE','TEAMLEAD','PM','DM','FINANCE','LEADERSHIP','ADMIN','SUPERADMIN'], tier: 'api' },
+      { label: 'Read org masters',            endpoint: 'GET /api/org/*',                         roles: ['EMPLOYEE','TEAMLEAD','PM','DM','FINANCE','LEADERSHIP','ADMIN','SUPERADMIN'], tier: 'api' },
+      { label: 'Profile & Notifications',     endpoint: 'GET /api/users/me, GET /api/notifications', roles: ['EMPLOYEE','TEAMLEAD','PM','DM','FINANCE','LEADERSHIP','ADMIN','SUPERADMIN'], tier: 'api' },
     ],
   },
   {
@@ -45,14 +50,26 @@ const GROUPS: PermGroup[] = [
     ],
   },
   {
-    label: 'Platform admin — Super Admin only',
+    label: 'User administration — Admin only',
     rows: [
-      { label: 'User management (CRUD)',       endpoint: 'GET/POST/PATCH /api/users',              roles: ['SUPERADMIN'], tier: 'api' },
-      { label: 'Audit log (read all)',         endpoint: 'GET /api/audit',                         roles: ['SUPERADMIN'], tier: 'api' },
-      { label: 'Role information',             endpoint: 'GET /api/roles',                         roles: ['SUPERADMIN'], tier: 'api' },
-      { label: 'Admin stats dashboard',        endpoint: 'GET /api/admin/stats',                   roles: ['SUPERADMIN'], tier: 'api' },
+      { label: 'User management (CRUD)',       endpoint: 'GET/POST/PATCH/DELETE /api/users',       roles: ['ADMIN'], tier: 'api' },
+      { label: 'Audit log (read all)',         endpoint: 'GET /api/audit',                         roles: ['ADMIN'], tier: 'api' },
+      { label: 'Role information',             endpoint: 'GET /api/roles',                         roles: ['ADMIN'], tier: 'api' },
+      { label: 'Admin stats dashboard',        endpoint: 'GET /api/admin/stats',                   roles: ['ADMIN'], tier: 'api' },
+      { label: 'Shift definitions (read)',     endpoint: 'GET /api/admin/business-rules/shifts',   roles: ['ADMIN','SUPERADMIN'], tier: 'api' },
+      { label: 'Write org masters',            endpoint: 'POST/PATCH/DELETE /api/org/*',           roles: ['ADMIN','SUPERADMIN'], tier: 'api' },
+    ],
+  },
+  {
+    label: 'Executive oversight — Super Admin only',
+    rows: [
+      { label: 'Executive Dashboard',          endpoint: 'GET /api/executive/dashboard',           roles: ['SUPERADMIN'], tier: 'api' },
+    ],
+  },
+  {
+    label: 'System configuration — Super Admin only',
+    rows: [
       { label: 'Business rules config',        endpoint: 'GET/PUT /api/admin/business-rules/*',    roles: ['SUPERADMIN'], tier: 'api' },
-      { label: 'Write org masters',            endpoint: 'POST/PATCH/DELETE /api/org/*',           roles: ['SUPERADMIN'], tier: 'api' },
     ],
   },
   {
@@ -60,10 +77,13 @@ const GROUPS: PermGroup[] = [
     rows: [
       { label: 'Team dashboard & approvals',  endpoint: '/team/*', roles: ['TEAMLEAD','SUPERADMIN'], tier: 'ui' },
       { label: 'Delivery management',         endpoint: '/dm/*',   roles: ['DM','SUPERADMIN'],       tier: 'ui' },
-      { label: 'HR modules',                  endpoint: '/hr/*',   roles: ['HR','SUPERADMIN'],       tier: 'ui' },
       { label: 'Finance modules',             endpoint: '/finance/*', roles: ['FINANCE','SUPERADMIN'], tier: 'ui' },
       { label: 'Org-wide analytics',          endpoint: '/leadership/*', roles: ['LEADERSHIP','SUPERADMIN'], tier: 'ui' },
-      { label: 'Admin console',               endpoint: '/admin/*', roles: ['SUPERADMIN'],           tier: 'ui' },
+      { label: 'User Administration console', endpoint: '/admin/dashboard, /admin/users, /admin/roles, /admin/audit', roles: ['ADMIN'], tier: 'ui' },
+      { label: 'Organization Masters console', endpoint: '/admin/org-masters', roles: ['ADMIN','SUPERADMIN'], tier: 'ui' },
+      { label: 'Executive Dashboard',         endpoint: '/admin/executive-dashboard', roles: ['SUPERADMIN'], tier: 'ui' },
+      { label: 'System configuration console', endpoint: '/admin/rules, /admin/integrations, /admin/ai', roles: ['SUPERADMIN'], tier: 'ui' },
+      { label: 'Reportee Views (read-only)',  endpoint: '/admin/reportee/*', roles: ['SUPERADMIN'], tier: 'ui' },
     ],
   },
 ];
