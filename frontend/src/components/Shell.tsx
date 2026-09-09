@@ -469,7 +469,8 @@ function NavGroupRow({ label, icon: Icon, expanded, onToggle }: {
         fontWeight: 450,
         lineHeight: 'normal',
         textAlign: 'left',
-        color: 'inherit',
+color: 'inherit',
+        fontFamily: 'inherit',
       }}
     >
       <Icon size={17} style={{ flex: 'none', opacity: 0.8 }} aria-hidden="true" />
@@ -1202,3 +1203,6 @@ export function Shell() {
     </div>
   );
 }
+
+
+
