@@ -88,9 +88,13 @@ public class EodEntry {
         DRAFT, SUBMITTED, APPROVED, REJECTED, MISSED
     }
 
-    /** Day-level classification. HOLIDAY carries no task rows at all. */
+    /**
+     * Day-level classification. HOLIDAY carries no task rows at all. FIRST_HALF_LEAVE and
+     * SECOND_HALF_LEAVE are half-day absences: the other half is still worked, so — unlike
+     * LEAVE — they carry task rows, a work location, and a (reduced) minimum-hours requirement.
+     */
     public enum DayType {
-        WORKING_DAY, LEAVE, HOLIDAY
+        WORKING_DAY, FIRST_HALF_LEAVE, SECOND_HALF_LEAVE, LEAVE, HOLIDAY
     }
 
     /** Partial-day schedule shift on a working day. Not an absence — that is DayType.LEAVE. */

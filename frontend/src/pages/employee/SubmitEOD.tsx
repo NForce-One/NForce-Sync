@@ -46,24 +46,32 @@ const LEAVE = 'Leave';
 const MAX_TEXT_LEN = 300;
 
 const DAY_TYPES = [
-  { value: 'WORKING_DAY', label: 'Working day' },
-  { value: 'LEAVE',       label: 'Leave' },
-  { value: 'HOLIDAY',     label: 'Holiday' },
+  { value: 'WORKING_DAY',       label: 'Working day' },
+  { value: 'FIRST_HALF_LEAVE',  label: 'First Half Leave' },
+  { value: 'SECOND_HALF_LEAVE', label: 'Second Half Leave' },
+  { value: 'LEAVE',             label: 'Leave' },
+  { value: 'HOLIDAY',           label: 'Holiday' },
 ];
 
+/** Labels for the two half-day leave types, reused by both the "no tasks" gate and messages. */
+const HALF_LEAVE_LABELS: Record<string, string> = {
+  FIRST_HALF_LEAVE:  'First Half Leave',
+  SECOND_HALF_LEAVE: 'Second Half Leave',
+};
+
 
 /**
- * Reference cap for the live "x / y hrs" readout and instant client-side feedback.
- * The BACKEND is authoritative and reads business_rule_config.standard_hours_per_day;
- * that config is behind /api/admin/business-rules which is SUPERADMIN-only, so an
- * employee cannot fetch it. If an admin moves it off 8, this preview drifts until the
- * server rejects with the real number.
+ * Fallback only — used for the one render before `dayDefaults` (below) has loaded, or if that
+ * call fails. The REAL value comes from GET /api/eod/day-defaults, which now also returns
+ * business_rule_config.standard_hours_per_day (read live by the backend on every call). That
+ * endpoint isn't gated SUPERADMIN like /api/admin/business-rules, so an ordinary employee can
+ * read it — see EodService.getDayDefaults. Kept in sync with EodService's own FALLBACK_HOURS_PER_DAY.
  */
-const DAILY_HOURS_CAP = 8;
+const FALLBACK_HOURS_PER_DAY = 8;
 
 /**
- * Hard bounds for one day's logged hours, both inclusive. Distinct from DAILY_HOURS_CAP above,
- * which is only a reference — going over THAT is overtime and allowed. These bound what is
+ * Hard bounds for one day's logged hours, both inclusive. Distinct from the configured working
+ * hours cap, which is only a reference — going over THAT is overtime and allowed. These bound what is
  * plausible for a day: an entry totalling 0 records nothing, and more than 24 is a typo.
  * Mirrored server-side in EodService.
  */
@@ -107,6 +115,21 @@ function minutesToHm(mins: number): string {
   const h = Math.floor(wrapped / 60);
   const m = wrapped % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * Total minutes → "H.MM" for the "hrs expected" indicator's numerator — NOT decimal hours.
+ * 45 minutes renders as ".45", not ".75" (which is what 45 minutes actually is in decimal
+ * hours). `totalMinutes` needs no pre-rounding into an hours/minutes pair by the caller: any
+ * value (e.g. 30 task-minutes + 45 adjustment-minutes = 75) rolls over into the next hour here.
+ * Only ever used for DISPLAY — every real comparison (overtime, min/max-hours validation) uses
+ * the actual decimal-hours value (totalMinutes / 60), never this string.
+ */
+function formatHrsMinutes(totalMinutes: number): string {
+  const mins = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(mins / 60);
+  const remainder = mins % 60;
+  return `${hours}.${String(remainder).padStart(2, '0')}`;
 }
 
 
@@ -465,10 +488,24 @@ export default function SubmitEOD() {
   // today, extensible to leave/shift sources later without touching the populate effect below.
   // Only ever consulted when there's no saved entry for the date (see the effect); a saved
   // entry's own values always win.
+  //
+  // Also carries workingHoursPerDay (a live Super Admin Business Rules value — see
+  // dailyHoursCap below), which must never look stale, so staleTime:0 overrides the 30s
+  // default in main.tsx's QueryClient: every remount or window refocus (React Query's default
+  // refetchOnMount/refetchOnWindowFocus behavior only refetches when data IS stale) hits the
+  // network again instead of serving a cached value from before a Business Rules change.
+  // Same pattern as notifications.ts's own staleTime:0 override.
   const { data: dayDefaults, isLoading: loadingDayDefaults } = useQuery({
     queryKey: ['eod', 'day-defaults', selectedDate],
     queryFn:  () => getDayDefaults(selectedDate),
+    staleTime: 0,
   });
+
+  // The Super Admin's configured Standard Working Hours (Business Rules → Time & Attendance),
+  // read fresh on every day-defaults fetch — a single global value, not scoped by role,
+  // department, or entry date. Same source EodService.dailyHoursCap() reads server-side, so the
+  // "X / Y hrs" target below and the server's minimum-hours rejection can never disagree.
+  const dailyHoursCap = dayDefaults?.workingHoursPerDay ?? FALLBACK_HOURS_PER_DAY;
 
   // Shift timings + real monthly allowance usage. Keyed by date so the month's counts follow
   // the entry date rather than today.
@@ -541,9 +578,11 @@ export default function SubmitEOD() {
 
   function handleDayTypeChange(next: string) {
     setDayType(next);
-    // Neither a holiday nor an as-yet-workless leave day carries a work location.
-    if (next !== 'WORKING_DAY') setWorkLocation('');
-    // A time adjustment only exists on a working day — leaving one behind would submit an
+    // A holiday and a full-day leave carry no work location — but a half-day leave still does,
+    // since the other half of the day is still worked.
+    const nextIsWorkDay = next === 'WORKING_DAY' || next === 'FIRST_HALF_LEAVE' || next === 'SECOND_HALF_LEAVE';
+    if (!nextIsWorkDay) setWorkLocation('');
+    // A time adjustment only exists on a full working day — leaving one behind would submit an
     // adjustment the form no longer shows. The server clears it too.
     if (next !== 'WORKING_DAY') {
       setAdjEnabled(false);
@@ -572,6 +611,10 @@ export default function SubmitEOD() {
 
   const isHoliday  = dayType === 'HOLIDAY';
   const isLeaveDay = dayType === 'LEAVE';
+  // A half-day leave still has a worked half — tasks and a work location are required, just
+  // like a working day, only the minimum-hours bar (below) is lower. Deliberately NOT folded
+  // into isNonWorkDay, which is reserved for days with nothing at all to log.
+  const isHalfLeave = dayType === 'FIRST_HALF_LEAVE' || dayType === 'SECOND_HALF_LEAVE';
   // Leave now reuses the Holiday "nothing to log" treatment: no tasks, no work location,
   // no time adjustment. Neither day type has productive work to enter.
   const isNonWorkDay = isHoliday || isLeaveDay;
@@ -597,16 +640,26 @@ export default function SubmitEOD() {
   /** No headroom left at all — every type is unavailable, not just the one already used. */
   const adjExhausted = adjRemaining <= 0;
 
-  // Reference hours for the day. Based on the PAID WORKING DAY, not the shift span: a 15:30-00:30
-  // shift spans 540 minutes but only 480 are work, the other 60 being an unpaid break that
-  // shift_definition doesn't model. Deducting from the span would credit the break as work
-  // (a 2-hour early leave would expect 7 hrs instead of 6). Either way this is a REFERENCE —
-  // exceeding it is overtime, not an error. Mirrors EodService.applyOvertime.
   const shiftMins    = adjContext?.shiftDurationMinutes ?? 0;
-  const expectedHrs  = adjActive ? Math.max(0, DAILY_HOURS_CAP - adjMins / 60) : DAILY_HOURS_CAP;
+  // A half-day leave is only expected to cover half the standard day, so that half — not the
+  // full dailyHoursCap — is both its minimum-hours floor and its overtime reference. Mirrors
+  // EodService.halfDayHoursCap()/applyOvertime.
+  const halfDayHoursCap = dailyHoursCap / 2;
+  // The TARGET never moves for a time adjustment — only which hours count as "logged" does (see
+  // totalMinutesLogged below). Mirrors EodService.applyOvertime, which keeps its `reference`
+  // fixed and adds the adjustment to the worked-hours side of the comparison instead.
+  const expectedHrs  = isHalfLeave ? halfDayHoursCap : dailyHoursCap;
   /** Unpaid break implied by the gap between the rostered span and the paid working day. */
-  const breakMins    = Math.max(0, shiftMins - DAILY_HOURS_CAP * 60);
-  const overtimeHrs  = Math.max(0, totalHours - expectedHrs);
+  const breakMins    = Math.max(0, shiftMins - dailyHoursCap * 60);
+  // Logged hours for the day = task rows + an active time adjustment's duration, counted in
+  // whole minutes so a rollover (e.g. 30 task-minutes + 45 adjustment-minutes = 75) correctly
+  // carries into the next hour instead of ever showing a 60+ minute remainder. This is the value
+  // used for BOTH the "hrs expected" indicator (formatted specially, see formatHrsMinutes) and
+  // the real decimal-hours arithmetic below (overtime, min/max-hours validation) — never the
+  // formatted STRING. Mirrors EodService.applyOvertime/validateLoggedDay.
+  const totalMinutesLogged = Math.round(totalHours * 60) + (adjActive ? adjMins : 0);
+  const effectiveLoggedHours = totalMinutesLogged / 60;
+  const overtimeHrs  = Math.max(0, effectiveLoggedHours - expectedHrs);
   const hasOvertime  = !isNonWorkDay && overtimeHrs > 0.001;
 
   /** Live impact line. Exact wording matches the approved prototype. */
@@ -772,7 +825,9 @@ export default function SubmitEOD() {
     }
 
     if (tasks.length === 0) {
-      errs.push('At least one task row is required for a working day.');
+      errs.push(isHalfLeave
+        ? `At least one task row is required for ${HALF_LEAVE_LABELS[dayType]}.`
+        : 'At least one task row is required for a working day.');
       return errs;
     }
     tasks.forEach((t, i) => {
@@ -797,12 +852,20 @@ export default function SubmitEOD() {
       }
     });
     // Exceeding the day's EXPECTED hours is overtime, surfaced to the manager on submit, never a
-    // reason to block. These are different: they bound what is plausible for a day.
-    if (totalHours < MIN_HOURS_PER_DAY - 0.001) {
-      errs.push(`Total hours (${totalHours.toFixed(1)}) must be at least ${MIN_HOURS_PER_DAY} for a single day.`);
+    // reason to block. These are different: they bound what is plausible for a day. A half-day
+    // leave's floor is half of dailyHoursCap rather than the flat MIN_HOURS_PER_DAY — OT hours
+    // logged on top never lower it (see halfDayHoursCap above / EodService.validateLoggedDay).
+    // A time adjustment's minutes count toward logged hours here too, same as the "hrs
+    // expected" indicator and the backend's validateLoggedDay — effectiveLoggedHours, not the
+    // raw task-only totalHours.
+    const requiredMinHours = isHalfLeave ? halfDayHoursCap : MIN_HOURS_PER_DAY;
+    if (effectiveLoggedHours < requiredMinHours - 0.001) {
+      errs.push(isHalfLeave
+        ? `Minimum ${requiredMinHours.toFixed(1)} hours required for ${HALF_LEAVE_LABELS[dayType]} — you've logged ${effectiveLoggedHours.toFixed(2)} hours.`
+        : `Total hours (${effectiveLoggedHours.toFixed(2)}) must be at least ${MIN_HOURS_PER_DAY} for a single day.`);
     }
-    if (totalHours > MAX_HOURS_PER_DAY + 0.001) {
-      errs.push(`Total hours (${totalHours.toFixed(1)}) cannot exceed ${MAX_HOURS_PER_DAY} for a single day.`);
+    if (effectiveLoggedHours > MAX_HOURS_PER_DAY + 0.001) {
+      errs.push(`Total hours (${effectiveLoggedHours.toFixed(2)}) cannot exceed ${MAX_HOURS_PER_DAY} for a single day.`);
     }
     errs.push(...validateAdjustment());
     return errs;
@@ -1079,9 +1142,10 @@ export default function SubmitEOD() {
               <div style={{ fontSize: 11.5, color: 'var(--txt-dim)', marginTop: 6 }}>
                 {adjBanner()}
               </div>
-              {/* Says out loud why the day's expected hours are below the usual 8. */}
+              {/* Says out loud that the adjustment counts toward logged hours, not toward a
+                  bigger target — the target itself never moves for an adjustment. */}
               <div style={{ fontSize: 11.5, color: 'var(--txt-dim)', marginTop: 4 }}>
-                Expected hours reduced to {expectedHrs.toFixed(2)} for this day.
+                {minutesLabel(adjMins)} counted toward this day's logged hours — the {expectedHrs.toFixed(1)}h target is unchanged.
               </div>
             </div>
           )}
@@ -1120,11 +1184,11 @@ export default function SubmitEOD() {
                       <span style={{ color: 'var(--txt-dim)', fontFamily: 'inherit' }}> · {adjContext.shiftName}</span>
                     )}
                   </div>
-                  {/* Spells out why expected hours come off 8 and not the 9-hour span. */}
+                  {/* Spells out why expected hours come off the configured cap and not the longer span. */}
                   <div style={{ fontSize: 11, color: 'var(--txt-dim)', marginBottom: 14 }}>
                     {(shiftMins / 60).toFixed(0)}h rostered
                     {breakMins > 0 && ` · ${breakMins}m unpaid break`}
-                    {' '}· {DAILY_HOURS_CAP} working hours
+                    {' '}· {dailyHoursCap} working hours
                   </div>
 
                   {/* Mutually exclusive types. The budget is one shared pool, so when it is spent
@@ -1268,8 +1332,14 @@ export default function SubmitEOD() {
                   </span>
                 )}
                 <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 13, color: 'var(--txt-mut)' }}>
-                  <span style={{ color: 'var(--txt)', fontWeight: 600 }}>{totalHours.toFixed(1)}</span>
-                  {' '}/ {expectedHrs.toFixed(adjActive ? 2 : 1)}
+                  {/* Numerator: task hours + an active adjustment's minutes, in "H.MM" notation
+                      (45 minutes → ".45", NOT decimal-hours ".75") — never decimal math when an
+                      adjustment is active. Denominator: the fixed target, plain decimal, never
+                      touched by the adjustment. */}
+                  <span style={{ color: 'var(--txt)', fontWeight: 600 }}>
+                    {adjActive ? formatHrsMinutes(totalMinutesLogged) : totalHours.toFixed(1)}
+                  </span>
+                  {' '}/ {expectedHrs.toFixed(1)}
                   {' '}hrs {adjActive ? 'expected' : 'total'}
                 </div>
               </div>

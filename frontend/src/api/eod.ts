@@ -150,10 +150,14 @@ export async function getEntry(id: number): Promise<EodEntryDto> {
   return res.data;
 }
 
-/** Day Type / Work Location defaults for a date with no saved entry yet — see SubmitEOD. */
+/** Day Type / Work Location defaults for a date with no saved entry yet — see SubmitEOD.
+ *  workingHoursPerDay is different: it's the live Super Admin Business Rules value, returned
+ *  for every date regardless of whether a saved entry exists — same source EodService's
+ *  hour-validation reads, so the form's target and its validation floor never disagree. */
 export interface EodDayDefaultsDto {
   dayType: string;
   workLocation: string | null;
+  workingHoursPerDay: number;
 }
 
 export async function getDayDefaults(date: string): Promise<EodDayDefaultsDto> {

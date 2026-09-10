@@ -22,6 +22,13 @@ const HISTORY_TABLE_COLUMNS = '1.3fr 0.8fr 1.5fr 70px 1fr 1fr 32px';
 // 1074px desktop content width so it never scrolls at an approved desktop size.
 const HISTORY_TABLE_MIN_WIDTH = 840;
 
+// ── Day type helpers ──────────────────────────────────────────────────────────
+
+const DAY_TYPE_LABELS: Record<string, string> = {
+  FIRST_HALF_LEAVE:  'First Half Leave',
+  SECOND_HALF_LEAVE: 'Second Half Leave',
+};
+
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<string, { color: string; label: string; Icon: React.FC<{ size: number }> }> = {
@@ -167,7 +174,11 @@ export default function EodHistory() {
   };
 
   const taskSummary = (entry: EodHistoryEntryDto): string => {
-    if (entry.tasks.length === 0) return entry.dayType !== 'WORKING_DAY' ? entry.dayType.replace('_', ' ') : '—';
+    if (entry.tasks.length === 0) {
+      return entry.dayType !== 'WORKING_DAY'
+        ? (DAY_TYPE_LABELS[entry.dayType] ?? entry.dayType.replace('_', ' '))
+        : '—';
+    }
     const labels = entry.tasks.map(t => t.categoryName || t.description || 'Task');
     return labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1} more`;
   };

@@ -56,6 +56,14 @@ public class EodService {
     private static final BigDecimal MIN_HOURS_PER_DAY = BigDecimal.valueOf(2);
     private static final BigDecimal MAX_HOURS_PER_DAY = BigDecimal.valueOf(24);
 
+    /**
+     * A half-day leave still requires the worked half to be logged. The floor is half of the
+     * Super Admin's configured Standard Working Hours — same source of truth as the full-day
+     * reference below — so a change there is picked up here automatically, no code change needed.
+     */
+    private static final java.util.Set<EodEntry.DayType> HALF_LEAVE_TYPES = java.util.Set.of(
+            EodEntry.DayType.FIRST_HALF_LEAVE, EodEntry.DayType.SECOND_HALF_LEAVE);
+
     /** Only used if the config row is somehow absent — fails closed rather than allowing
      *  unlimited adjustments, matching what getTimeAdjustmentContext already displays. */
     private static final int FALLBACK_ADJUSTMENT_ALLOWANCE = 0;
@@ -414,6 +422,15 @@ public class EodService {
                 .orElse(FALLBACK_HOURS_PER_DAY);
     }
 
+    /** Half of {@link #dailyHoursCap()} — the minimum/OT reference for a half-day leave. */
+    private BigDecimal halfDayHoursCap() {
+        return dailyHoursCap().divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+    }
+
+    private static String dayTypeLabel(EodEntry.DayType dayType) {
+        return dayType == EodEntry.DayType.FIRST_HALF_LEAVE ? "First Half Leave" : "Second Half Leave";
+    }
+
     /**
      * Task and hours validation for WORKING_DAY and LEAVE (never called for HOLIDAY). Task rows
      * are mandatory only for WORKING_DAY; LEAVE may submit with none.
@@ -484,14 +501,25 @@ public class EodService {
         // Exceeding the day's EXPECTED hours is overtime, flagged in applyOvertime, never a
         // rejection. These two are different: they bound what is physically plausible for a day,
         // catching a 0-hour submission at one end and a typo at the other. Both are inclusive.
-        // The minimum applies to a WORKING_DAY only. On a leave day the hours are optional — the
+        // The minimum applies to WORKING_DAY (flat 2h floor) and to the two half-leave types
+        // (half of Standard Working Hours — OT, if any, is computed on top of this in
+        // applyOvertime and never lowers it). On a full LEAVE day the hours are optional — the
         // absence is the record, so a leave row left at 0 is legitimate. The maximum still applies
         // to every day type, since no amount of leave makes a day longer than 24 hours.
-        if (entry.getDayType() != EodEntry.DayType.LEAVE
-                && total.compareTo(MIN_HOURS_PER_DAY) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Total hours (" + total.stripTrailingZeros().toPlainString()
-                            + ") must be at least 2 for a single day.");
+        if (entry.getDayType() != EodEntry.DayType.LEAVE) {
+            if (HALF_LEAVE_TYPES.contains(entry.getDayType())) {
+                BigDecimal minimum = halfDayHoursCap();
+                if (total.compareTo(minimum) < 0) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Minimum " + minimum.stripTrailingZeros().toPlainString() + " hours required for "
+                                    + dayTypeLabel(entry.getDayType()) + " — you've logged "
+                                    + total.stripTrailingZeros().toPlainString() + " hours.");
+                }
+            } else if (total.compareTo(MIN_HOURS_PER_DAY) < 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Total hours (" + total.stripTrailingZeros().toPlainString()
+                                + ") must be at least 2 for a single day.");
+            }
         }
         if (total.compareTo(MAX_HOURS_PER_DAY) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -597,12 +625,18 @@ public class EodService {
      * Flags hours beyond the day's reference as overtime. Applies to EVERY day. Never rejects —
      * employees may log additional hours independently of any adjustment.
      *
-     * The reference is the PAID WORKING DAY (standard_hours_per_day), not the shift span. A shift
-     * spans longer than it pays: 15:30-00:30 is 540 minutes but 480 of those are work, the other
-     * 60 being an unpaid break that shift_definition does not model. Deducting the adjustment from
-     * the 540 span would credit that break as work — a 2-hour early leave would expect 7 hours
-     * instead of 6. The span is still used for the banner and the "not longer than your shift"
-     * check, just not as the hours basis.
+     * A time adjustment (late arrival, early leave, or time away mid-shift) ADDS to the
+     * reference, not subtracts: those minutes are time the employee was away, so they are
+     * expected to make that time up on top of the standard day rather than getting a shortened
+     * day out of it — the reference is what the employee owes counting the adjustment, not what
+     * remains of the shift.
+     *
+     * The reference starts from the PAID WORKING DAY (standard_hours_per_day), not the shift
+     * span. A shift spans longer than it pays: 15:30-00:30 is 540 minutes but 480 of those are
+     * work, the other 60 being an unpaid break that shift_definition does not model. Adding the
+     * adjustment to the 540 span would compound that break into the reference — a 2-hour early
+     * leave should expect 10 hours (480+120), not 11 (540+120). The span is still used for the
+     * banner and the "not longer than your shift" check, just not as the hours basis.
      */
     private void applyOvertime(EodEntry entry, AppUser employee) {
         if (entry.getDayType() == EodEntry.DayType.HOLIDAY) {
@@ -611,13 +645,18 @@ public class EodService {
             return;
         }
 
-        BigDecimal reference = dailyHoursCap();
+        // A half-day leave is only expected to cover half the standard day, so hours beyond
+        // THAT half (not the full day) are what count as overtime — matching the "half + OT"
+        // framing of the minimum-hours rule in validateLoggedDay.
+        BigDecimal reference = HALF_LEAVE_TYPES.contains(entry.getDayType())
+                ? halfDayHoursCap()
+                : dailyHoursCap();
 
         Integer minutes = entry.getTimeAdjustmentMinutes();
         if (entry.getTimeAdjustmentType() != null && minutes != null) {
             BigDecimal adjustmentHours = BigDecimal.valueOf(minutes)
                     .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
-            reference = reference.subtract(adjustmentHours).max(BigDecimal.ZERO);
+            reference = reference.add(adjustmentHours);
         }
 
         BigDecimal excess = totalHours(entry).subtract(reference);
@@ -664,17 +703,25 @@ public class EodService {
      * only existing source of truth that can override the plain "working day in the office"
      * default — there is no Leave-records table (leave is self-reported on the entry, not a
      * pre-existing record to look up) and no per-date/location shift assignment to consult.
+     *
+     * Also carries workingHoursPerDay — read fresh from Business Rules on every call via
+     * dailyHoursCap(), same as validateLoggedDay/applyOvertime use — so the form's "X / Y hrs"
+     * target and its minimum-hours validation can never drift out of sync with each other, and a
+     * Super Admin change to Standard Working Hours shows up here immediately with no redeploy.
+     * Unlike dayType/workLocation this is returned regardless of whether a saved entry exists —
+     * an employee re-opening an already-submitted day should still see today's configured value.
      */
     @Transactional(readOnly = true)
     public EodDayDefaultsDto getDayDefaults(LocalDate date, String actingEmail) {
         requireUserByEmail(actingEmail); // enforces authentication, mirrors other endpoints here
         LocalDate target = date != null ? date : LocalDate.now();
+        BigDecimal hoursPerDay = dailyHoursCap();
 
         boolean isHoliday = holidayRepository.existsByHolidayDate(target);
         if (isHoliday) {
-            return new EodDayDefaultsDto(EodEntry.DayType.HOLIDAY.name(), null);
+            return new EodDayDefaultsDto(EodEntry.DayType.HOLIDAY.name(), null, hoursPerDay);
         }
-        return new EodDayDefaultsDto(EodEntry.DayType.WORKING_DAY.name(), DEFAULT_WORK_LOCATION);
+        return new EodDayDefaultsDto(EodEntry.DayType.WORKING_DAY.name(), DEFAULT_WORK_LOCATION, hoursPerDay);
     }
 
     private EodTask buildTask(SaveEodTaskRequest req, EodEntry entry) {

@@ -57,7 +57,12 @@ export function daySummary(entry: EodEntryDto): string | null {
   const overtime = entry.isOvertime && entry.overtimeHours != null ? Number(entry.overtimeHours) : 0;
 
   const parts: string[] = [];
-  if (entry.dayType === 'LEAVE') {
+  if (entry.dayType === 'FIRST_HALF_LEAVE' || entry.dayType === 'SECOND_HALF_LEAVE') {
+    // Explicit day types now, so no need to infer "half-day" from a worked-hours heuristic
+    // the way the plain LEAVE branch below still has to for older data.
+    const label = entry.dayType === 'FIRST_HALF_LEAVE' ? 'First half leave' : 'Second half leave';
+    parts.push(leaveHours > 0 ? `${label} ${hrs(leaveHours)}h` : label);
+  } else if (entry.dayType === 'LEAVE') {
     // A task-less full-day Leave has no rows to sum hours from — leaveHours is 0 in that case,
     // same as a normal working day with none, so this can't gate on leaveHours > 0 the way the
     // Holiday branch above gates on nothing at all. Falls back to a plain "Full-day leave" label.
