@@ -9,9 +9,12 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
+// Shared with Admin, same as Organization Masters (OrgController): Business Rules is
+// system/business-level configuration Admin also manages, same page/API/data as Super Admin's —
+// no separate Admin-specific logic.
 @RestController
 @RequestMapping("/api/admin/business-rules")
-@PreAuthorize("hasRole('SUPERADMIN')")
+@PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
 public class BusinessRuleController {
 
     private final BusinessRuleService businessRuleService;
@@ -64,10 +67,7 @@ public class BusinessRuleController {
 
     // ── Shift timings ───────────────────────────────────────────────────────────
 
-    // Also readable by Admin: the Create/Edit User form's optional Shift dropdown needs this
-    // list, and Admin (not Super Admin) now owns user administration.
     @GetMapping("/shifts")
-    @PreAuthorize("hasAnyRole('SUPERADMIN', 'ADMIN')")
     public List<ShiftDefinitionDto> listShifts() {
         return businessRuleService.listShifts();
     }

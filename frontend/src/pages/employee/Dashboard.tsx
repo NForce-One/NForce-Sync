@@ -53,6 +53,9 @@ function SectionLabel({ children, style, id }: { children: React.ReactNode; styl
 // ── Calendar cell helpers ──────────────────────────────────────────────────────
 
 function cellTint(day: CalendarDay): string {
+  // Checked before the weekend/future/empty fallback so a holiday still reads as a holiday
+  // even when it falls on a not-yet-arrived date (backend never sets HOLIDAY on a weekend).
+  if (day.status === 'HOLIDAY') return 'color-mix(in srgb, var(--accent2) 30%, var(--raised2))';
   if (day.isWeekend || day.isFuture || day.status === 'EMPTY') return 'var(--raised2)';
   switch (day.status) {
     case 'APPROVED': {
@@ -71,11 +74,13 @@ function cellTint(day: CalendarDay): string {
 
 function cellBorderColor(day: CalendarDay, isToday: boolean): string {
   if (isToday) return 'color-mix(in srgb, var(--txt) 55%, transparent)';
+  if (day.status === 'HOLIDAY') return 'color-mix(in srgb, var(--accent2) 45%, transparent)';
   if (day.status === 'SUBMITTED') return 'color-mix(in srgb, var(--info) 40%, transparent)';
   return 'transparent';
 }
 
 function cellTextColor(day: CalendarDay): string {
+  if (day.status === 'HOLIDAY') return 'var(--txt)';
   if (day.isWeekend || day.isFuture || day.status === 'EMPTY') return 'var(--txt-dim)';
   if (day.status === 'APPROVED' && (day.utilizationPct ?? 0) >= 60) return 'rgba(255,255,255,0.85)';
   if (day.status === 'MISSED') return 'rgba(255,255,255,0.75)';
@@ -89,6 +94,7 @@ function cellDotColor(day: CalendarDay): string {
     case 'DRAFT':             return 'var(--txt-dim)';
     case 'MISSED':            return 'rgba(255,255,255,0.55)';
     case 'REJECTED':          return 'var(--risk)';
+    case 'HOLIDAY':           return 'var(--accent2)';
     default:                  return 'transparent';
   }
 }
@@ -96,6 +102,7 @@ function cellDotColor(day: CalendarDay): string {
 function calendarTooltip(day: CalendarDay): string {
   const d = new Date(day.date + 'T12:00:00');
   const label = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  if (day.status === 'HOLIDAY') return `${label} — Holiday${day.holidayName ? `: ${day.holidayName}` : ''}`;
   if (day.isWeekend) return `${label} — Weekend`;
   if (day.isFuture)  return `${label} — Future`;
   if (day.status === 'EMPTY') return `${label} — No entry`;
@@ -275,7 +282,7 @@ function CalendarHeatmap({
         {days.map((day) => {
           const isToday = day.date === todayStr;
           const dayNum  = new Date(day.date + 'T12:00:00').getDate();
-          const showDot = !day.isWeekend && !day.isFuture && day.status !== 'EMPTY';
+          const showDot = day.status === 'HOLIDAY' || (!day.isWeekend && !day.isFuture && day.status !== 'EMPTY');
           return (
             <div
               key={day.date}
@@ -326,6 +333,7 @@ function CalendarHeatmap({
           { bg: 'color-mix(in srgb, var(--risk) 50%, var(--raised2))', label: 'Missed' },
           { bg: 'color-mix(in srgb, var(--warn) 32%, var(--raised2))', label: 'CR / Rejected' },
           { bg: 'color-mix(in srgb, var(--info) 28%, var(--raised2))', label: 'Pending' },
+          { bg: 'color-mix(in srgb, var(--accent2) 30%, var(--raised2))', label: 'Holiday' },
           { bg: 'var(--raised2)', label: 'No entry', border: '1px solid var(--line)' },
         ].map(({ bg, label, border }) => (
           <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -344,14 +352,17 @@ function CalendarHeatmap({
 // ── Month Stats panel (inline — no Card wrapper) ───────────────────────────────
 
 function MonthStatsPanel({ days }: { days: CalendarDay[] }) {
-  const workingDays  = days.filter(d => !d.isWeekend).length;
-  const pastDays     = days.filter(d => !d.isWeekend && !d.isFuture).length;
+  // Holidays are non-working days, same as weekends — excluded from the working-day
+  // denominator so they don't dilute the completion percentage or read as "upcoming" work.
+  const workingDays  = days.filter(d => !d.isWeekend && d.status !== 'HOLIDAY').length;
+  const pastDays     = days.filter(d => !d.isWeekend && !d.isFuture && d.status !== 'HOLIDAY').length;
   const approved     = days.filter(d => d.status === 'APPROVED').length;
   const submitted    = days.filter(d => d.status === 'SUBMITTED').length;
   const missed       = days.filter(d => d.status === 'MISSED').length;
   const needsAction  = days.filter(d => d.status === 'REJECTED').length;
+  const holiday      = days.filter(d => d.status === 'HOLIDAY').length;
   const empty        = days.filter(d => !d.isWeekend && !d.isFuture && d.status === 'EMPTY').length;
-  const upcoming     = days.filter(d => !d.isWeekend && d.isFuture).length;
+  const upcoming     = days.filter(d => !d.isWeekend && d.isFuture && d.status !== 'HOLIDAY').length;
   const completePct  = pastDays > 0 ? Math.round((approved + submitted) / pastDays * 100) : 0;
 
   return (
@@ -387,6 +398,7 @@ function MonthStatsPanel({ days }: { days: CalendarDay[] }) {
           { color: 'var(--info)',    count: submitted,   label: 'Pending review' },
           { color: 'var(--warn)',    count: needsAction, label: 'Needs action' },
           { color: 'var(--risk)',    count: missed,      label: 'Missed' },
+          { color: 'var(--accent2)', count: holiday,     label: 'Holiday' },
           { color: 'var(--txt-dim)', count: empty,       label: 'Not submitted' },
           { color: 'var(--line2)',   count: upcoming,    label: 'Upcoming' },
         ] as { color: string; count: number; label: string }[]).map(({ color, count, label }) => (

@@ -62,6 +62,8 @@ public record DashboardSummaryDto(
             String status,
             BigDecimal utilizationPct,
             boolean isWeekend,
-            boolean isFuture
+            boolean isFuture,
+            boolean isHoliday,
+            String holidayName
     ) {}
 }

@@ -93,6 +93,7 @@ function ChunkPrefetcher() {
       import('./pages/admin/AuditLog');
       import('./pages/admin/RolesAccess');
       import('./pages/admin/OrganizationMasters');
+      import('./pages/admin/BusinessRules');
     } else if (user.role === 'superadmin') {
       import('./pages/admin/ExecutiveDashboard');
       import('./pages/admin/OrganizationMasters');

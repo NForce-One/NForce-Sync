@@ -120,13 +120,20 @@ public class ExecutiveDashboardService {
                 .filter(a -> activeEmployeeIds.contains(a.getEmployee().getId()))
                 .toList();
 
+        // Computed once and shared: this is the most expensive call in the whole dashboard (loads
+        // every active user, their allocations, and every EOD entry+task in range, then does a
+        // per-employee/per-day pass) and both buildEodCompliance and buildProjectsRequiringAttention
+        // used to call it separately with identical arguments — silently doubling the slowest part
+        // of the request for no reason.
+        MissingEodReportDto missingReport = teamMissingEodReportService.getReport(actingEmail, from, to, null, null);
+
         WorkforceOverviewDto workforce = buildWorkforce();
         ProjectPortfolioDto projects = buildProjects(allProjects);
-        EodComplianceDto eodCompliance = buildEodCompliance(actingEmail, from, to);
+        EodComplianceDto eodCompliance = buildEodCompliance(missingReport, from, to);
         UtilizationOverviewDto utilization = buildUtilization(activeEmployees, activeAllocations, from, to, config);
         AllocationOverviewDto allocation = buildAllocation(activeEmployees, activeAllocations);
         List<ProjectAttentionDto> attention = buildProjectsRequiringAttention(
-                allProjects, activeAllocations, actingEmail, from, to);
+                allProjects, activeAllocations, missingReport);
         List<AuditLogDto> recentActivity = auditLogRepository
                 .findTop10ByEntityTypeNotOrderByOccurredAtDesc("EOD_ENTRY")
                 .stream().map(AuditLogDto::from).toList();
@@ -181,7 +188,7 @@ public class ExecutiveDashboardService {
         return dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY;
     }
 
-    private EodComplianceDto buildEodCompliance(String actingEmail, LocalDate from, LocalDate to) {
+    private EodComplianceDto buildEodCompliance(MissingEodReportDto missingReport, LocalDate from, LocalDate to) {
         long activeUserCount = appUserRepository.countByStatusAndDeletedAtIsNull(AppUser.Status.ACTIVE);
 
         Set<LocalDate> holidays = holidayRepository.findByHolidayDateBetween(from, to).stream()
@@ -197,7 +204,7 @@ public class ExecutiveDashboardService {
         // Reuses the exact existing missing-EOD detection (shift cutoffs, holiday/leave/weekend
         // handling, at-risk threshold) — org-wide because the acting caller is SUPERADMIN, whose
         // "team" resolves to every active user (see TeamMissingEodReportService.getTeamMembers).
-        MissingEodReportDto missingReport = teamMissingEodReportService.getReport(actingEmail, from, to, null, null);
+        // Passed in by getDashboard, computed once and shared with buildProjectsRequiringAttention.
         long missingTotal = missingReport.totalMissingDays();
         long submitted = Math.max(expected - missingTotal, 0);
         BigDecimal compliancePct = compliancePct(submitted, expected);
@@ -349,8 +356,7 @@ public class ExecutiveDashboardService {
 
     private List<ProjectAttentionDto> buildProjectsRequiringAttention(List<Project> allProjects,
                                                                         List<Allocation> activeAllocations,
-                                                                        String actingEmail,
-                                                                        LocalDate from, LocalDate to) {
+                                                                        MissingEodReportDto missingReport) {
         List<ProjectAttentionDto> attention = new ArrayList<>();
 
         Set<Long> projectsWithAllocation = activeAllocations.stream()
@@ -371,7 +377,6 @@ public class ExecutiveDashboardService {
         Map<String, Project> projectByName = new HashMap<>();
         for (Project p : allProjects) projectByName.putIfAbsent(p.getName(), p);
 
-        MissingEodReportDto missingReport = teamMissingEodReportService.getReport(actingEmail, from, to, null, null);
         Map<String, Long> atRiskCountByProject = missingReport.employees().stream()
                 .filter(r -> "AT_RISK".equals(r.status()) && r.projectName() != null)
                 .collect(Collectors.groupingBy(MissingEodRowDto::projectName, Collectors.counting()));

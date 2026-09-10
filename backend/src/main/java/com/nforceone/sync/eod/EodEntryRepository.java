@@ -26,6 +26,21 @@ public interface EodEntryRepository extends JpaRepository<EodEntry, Long> {
     @EntityGraph(attributePaths = {"employee", "tasks", "tasks.project", "tasks.taskCategory"})
     List<EodEntry> findByEmployeeIdOrderByEntryDateDesc(Long employeeId);
 
+    // Lightweight projection — entryDate + status only, no employee/tasks/project/category join —
+    // for callers that only need to know what happened on which day (streak/last-issue lookback,
+    // the Monthly Activity calendar's per-cell status) and never touch entry.getTasks(). Avoids
+    // paying for the tasks/project/category join that findByEmployeeIdAndEntryDateBetween...'s
+    // @EntityGraph always fetches, whether or not the caller uses it.
+    @Query("SELECT e.entryDate as entryDate, e.status as status FROM EodEntry e " +
+           "WHERE e.employee.id = :employeeId AND e.entryDate BETWEEN :from AND :to")
+    List<EntryDateStatusView> findEntryDateAndStatusByEmployeeIdAndEntryDateBetween(
+            @Param("employeeId") Long employeeId, @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    interface EntryDateStatusView {
+        LocalDate getEntryDate();
+        EodEntry.Status getStatus();
+    }
+
     // From-only / to-only history filters — the Between query above requires both bounds.
     @EntityGraph(attributePaths = {"employee", "tasks", "tasks.project", "tasks.taskCategory"})
     List<EodEntry> findByEmployeeIdAndEntryDateGreaterThanEqualOrderByEntryDateDesc(

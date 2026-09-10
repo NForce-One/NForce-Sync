@@ -266,18 +266,21 @@ export const NAV: Record<Role, RoleNav> = {
   // block below for Super Admin's system-wide operational visibility). Organization Masters is
   // additionally shared with Admin (Department/Designation/Location/Project Type are attributes
   // on a user record, so Admin manages them as part of user administration too — see
-  // OrgController, now hasAnyRole('SUPERADMIN','ADMIN') on writes). Admin does not get Business
-  // Rules/Integrations/AI (system/business-level config that remains Super Admin's), and does
-  // not get Reportee Views (operational oversight, not user-administration).
+  // OrgController, now hasAnyRole('SUPERADMIN','ADMIN') on writes). Business Rules is likewise
+  // shared with Admin (BusinessRuleController, now hasAnyRole('SUPERADMIN','ADMIN')) — same page,
+  // same API, same data as Super Admin's. Admin does not get Integrations/AI (still Super Admin-
+  // only system config), and does not get Reportee Views (operational oversight, not
+  // user-administration).
   admin: [
     {
       section: 'Administration',
       items: [
-        { key: 'admin-dash',   label: 'Admin Dashboard',      path: '/admin/dashboard',    icon: LayoutDashboard },
-        { key: 'user-mgmt',    label: 'User Management',      path: '/admin/users',        icon: Users },
-        { key: 'org-masters',  label: 'Organization Masters', path: '/admin/org-masters',  icon: Building2 },
-        { key: 'role-mgmt',    label: 'Roles & Access',       path: '/admin/roles',        icon: Lock },
-        { key: 'audit',        label: 'Audit Log',            path: '/admin/audit',        icon: ScrollText },
+        { key: 'admin-dash',     label: 'Admin Dashboard',      path: '/admin/dashboard',    icon: LayoutDashboard },
+        { key: 'user-mgmt',      label: 'User Management',      path: '/admin/users',        icon: Users },
+        { key: 'org-masters',    label: 'Organization Masters', path: '/admin/org-masters',  icon: Building2 },
+        { key: 'business-rules', label: 'Business Rules',       path: '/admin/rules',        icon: Settings },
+        { key: 'role-mgmt',      label: 'Roles & Access',       path: '/admin/roles',        icon: Lock },
+        { key: 'audit',          label: 'Audit Log',            path: '/admin/audit',        icon: ScrollText },
       ],
     },
     {

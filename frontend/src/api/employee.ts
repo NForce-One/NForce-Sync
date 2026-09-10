@@ -56,6 +56,8 @@ export interface CalendarDay {
   utilizationPct: number | null;
   isWeekend: boolean;
   isFuture: boolean;
+  isHoliday: boolean;
+  holidayName: string | null;
 }
 
 export interface DashboardSummary {

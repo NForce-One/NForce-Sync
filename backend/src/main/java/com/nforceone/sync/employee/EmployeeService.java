@@ -2,6 +2,8 @@ package com.nforceone.sync.employee;
 
 import com.nforceone.sync.auth.AppUser;
 import com.nforceone.sync.auth.AppUserRepository;
+import com.nforceone.sync.businessrules.Holiday;
+import com.nforceone.sync.businessrules.HolidayRepository;
 import com.nforceone.sync.businessrules.ShiftDefinition;
 import com.nforceone.sync.businessrules.ShiftDefinitionRepository;
 import com.nforceone.sync.businessrules.ShiftSchedule;
@@ -39,19 +41,22 @@ public class EmployeeService {
     private final UtilizationService        utilizationService;
     private final AppUserRepository         userRepository;
     private final ShiftDefinitionRepository shiftRepository;
+    private final HolidayRepository         holidayRepository;
 
     public EmployeeService(EodEntryRepository entryRepository,
                            EodTaskRepository taskRepository,
                            UtilSnapshotRepository snapshotRepository,
                            UtilizationService utilizationService,
                            AppUserRepository userRepository,
-                           ShiftDefinitionRepository shiftRepository) {
+                           ShiftDefinitionRepository shiftRepository,
+                           HolidayRepository holidayRepository) {
         this.entryRepository  = entryRepository;
         this.taskRepository   = taskRepository;
         this.snapshotRepository = snapshotRepository;
         this.utilizationService = utilizationService;
         this.userRepository   = userRepository;
         this.shiftRepository  = shiftRepository;
+        this.holidayRepository = holidayRepository;
     }
 
     @Transactional(readOnly = true)
@@ -84,11 +89,22 @@ public class EmployeeService {
                 .toList();
         BigDecimal monthAvgUtil = computeAvgUtil(monthSnaps);
 
+        // Streak and days-since-last-issue both only need entryDate+status over a trailing
+        // lookback window, so they share ONE lightweight query (100 days covers both: streak
+        // needs 100, the issue lookback needs 90 and is filtered out of the same map) instead of
+        // each independently issuing its own full tasks/project/category-joined fetch.
+        Map<LocalDate, EodEntry.Status> statusByDate = entryRepository
+                .findEntryDateAndStatusByEmployeeIdAndEntryDateBetween(
+                        employeeId, today.minusDays(STREAK_LOOKBACK_DAYS), today)
+                .stream()
+                .collect(Collectors.toMap(EodEntryRepository.EntryDateStatusView::getEntryDate,
+                        EodEntryRepository.EntryDateStatusView::getStatus, (a, b) -> a));
+
         // Streak: consecutive approved weekdays going back from today
-        int streak = computeStreak(employeeId, today);
+        int streak = computeStreak(statusByDate, today);
 
         // Days since last issue (MISSED, REJECTED)
-        int daysSinceLastIssue = computeDaysSinceLastIssue(employeeId, today);
+        int daysSinceLastIssue = computeDaysSinceLastIssue(statusByDate, today);
 
         DashboardSummaryDto.QuickStats quickStats = new DashboardSummaryDto.QuickStats(
                 weekApprovedHours, monthAvgUtil, streak, daysSinceLastIssue);
@@ -167,19 +183,16 @@ public class EmployeeService {
         return shiftRepository.findById(shiftId).orElse(null);
     }
 
-    // Batches the whole lookback window into one query instead of one query per day walked —
-    // the loop below can walk up to 90 days backward (each iteration moves the cursor back by
-    // exactly one calendar day, whether skipping a weekend or checking a weekday), so a 100-day
-    // window covers the full walk with margin. This was previously the dominant contributor to
-    // the Employee Dashboard's load time: a long approved streak issued dozens of sequential
-    // single-row DB round trips inside the one request that gates the dashboard's skeleton.
-    private int computeStreak(Long employeeId, LocalDate today) {
-        LocalDate lookback = today.minusDays(100);
-        Map<LocalDate, EodEntry.Status> statusByDate = entryRepository
-                .findByEmployeeIdAndEntryDateBetweenOrderByEntryDateDesc(employeeId, lookback, today)
-                .stream()
-                .collect(Collectors.toMap(EodEntry::getEntryDate, EodEntry::getStatus, (a, b) -> a));
+    // The loop below can walk up to 90 days backward (each iteration moves the cursor back by
+    // exactly one calendar day, whether skipping a weekend or checking a weekday), so the shared
+    // 100-day statusByDate map (see getDashboardSummary) covers the full walk with margin. This
+    // was previously the dominant contributor to the Employee Dashboard's load time: a long
+    // approved streak issued dozens of sequential single-row DB round trips inside the one
+    // request that gates the dashboard's skeleton.
+    private static final int STREAK_LOOKBACK_DAYS = 100;
+    private static final int ISSUE_LOOKBACK_DAYS = 90;
 
+    private int computeStreak(Map<LocalDate, EodEntry.Status> statusByDate, LocalDate today) {
         int streak = 0;
         LocalDate cursor = isWeekend(today) ? previousWeekday(today) : today;
         for (int i = 0; i < 90; i++) {
@@ -197,15 +210,13 @@ public class EmployeeService {
         return streak;
     }
 
-    private int computeDaysSinceLastIssue(Long employeeId, LocalDate today) {
-        LocalDate lookback = today.minusDays(90);
-        List<EodEntry> entries = entryRepository
-                .findByEmployeeIdAndEntryDateBetweenOrderByEntryDateDesc(employeeId, lookback, today);
-
-        return entries.stream()
-                .filter(e -> e.getStatus() == EodEntry.Status.MISSED
-                          || e.getStatus() == EodEntry.Status.REJECTED)
-                .map(EodEntry::getEntryDate)
+    private int computeDaysSinceLastIssue(Map<LocalDate, EodEntry.Status> statusByDate, LocalDate today) {
+        LocalDate lookback = today.minusDays(ISSUE_LOOKBACK_DAYS);
+        return statusByDate.entrySet().stream()
+                .filter(e -> !e.getKey().isBefore(lookback))
+                .filter(e -> e.getValue() == EodEntry.Status.MISSED
+                          || e.getValue() == EodEntry.Status.REJECTED)
+                .map(Map.Entry::getKey)
                 .max(Comparator.naturalOrder())
                 .map(issueDate -> (int) today.toEpochDay() - (int) issueDate.toEpochDay())
                 .orElse(-1); // -1 = no issues found in 90-day window
@@ -317,10 +328,13 @@ public class EmployeeService {
     private List<DashboardSummaryDto.CalendarDay> buildCalendarData(Long employeeId, LocalDate gridStart, LocalDate gridEnd) {
         LocalDate realToday = LocalDate.now();
 
-        List<EodEntry> entries = entryRepository
-                .findByEmployeeIdAndEntryDateBetweenOrderByEntryDateDesc(employeeId, gridStart, gridEnd);
-        Map<LocalDate, String> statusMap = entries.stream()
-                .collect(Collectors.toMap(EodEntry::getEntryDate, e -> e.getStatus().name()));
+        // Lightweight projection: only entryDate/status are read below, so this skips the
+        // tasks/project/category join that the full-entity fetch would otherwise always pay for.
+        Map<LocalDate, String> statusMap = entryRepository
+                .findEntryDateAndStatusByEmployeeIdAndEntryDateBetween(employeeId, gridStart, gridEnd)
+                .stream()
+                .collect(Collectors.toMap(EodEntryRepository.EntryDateStatusView::getEntryDate,
+                        v -> v.getStatus().name()));
 
         List<UtilSnapshot> snaps = snapshotRepository
                 .findByEmployeeIdAndSnapshotDateBetweenOrderBySnapshotDateAsc(employeeId, gridStart, gridEnd);
@@ -333,17 +347,26 @@ public class EmployeeService {
             utilMap.put(snap.getSnapshotDate(), snap.getUtilizationPct());
         }
 
+        // Same source of truth as the Holiday Calendar admin screen and every other
+        // holiday-aware report (see MissingEodReportService): weekend > holiday > future
+        // > actual entry status, so a holiday never reads as a missed/empty working day.
+        Map<LocalDate, String> holidayMap = holidayRepository.findByHolidayDateBetween(gridStart, gridEnd).stream()
+                .collect(Collectors.toMap(Holiday::getHolidayDate, Holiday::getName));
+
         List<DashboardSummaryDto.CalendarDay> days = new ArrayList<>();
         LocalDate cursor = gridStart;
         while (!cursor.isAfter(gridEnd)) {
             boolean weekend = isWeekend(cursor);
+            String  holidayName = holidayMap.get(cursor);
+            boolean holiday = holidayName != null;
             boolean future  = cursor.isAfter(realToday);
             String status   = statusMap.get(cursor);
             if (weekend) status = "WEEKEND";
+            else if (holiday) status = "HOLIDAY";
             else if (future) status = "FUTURE";
             else if (status == null) status = "EMPTY";
             BigDecimal util = utilMap.get(cursor);
-            days.add(new DashboardSummaryDto.CalendarDay(cursor, status, util, weekend, future));
+            days.add(new DashboardSummaryDto.CalendarDay(cursor, status, util, weekend, future, holiday, holidayName));
             cursor = cursor.plusDays(1);
         }
         return days;
