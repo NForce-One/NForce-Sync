@@ -27,6 +27,7 @@ const HISTORY_TABLE_MIN_WIDTH = 840;
 const DAY_TYPE_LABELS: Record<string, string> = {
   FIRST_HALF_LEAVE:  'First Half Leave',
   SECOND_HALF_LEAVE: 'Second Half Leave',
+  WEEKEND:           'Weekend',
 };
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
