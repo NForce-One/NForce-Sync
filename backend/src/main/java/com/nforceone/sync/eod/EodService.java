@@ -146,11 +146,14 @@ public class EodService {
         entry.setDayType(dayType);
 
         boolean isHoliday = dayType == EodEntry.DayType.HOLIDAY;
+        boolean isWeekend = dayType == EodEntry.DayType.WEEKEND;
 
-        // A holiday has nothing to log, so it carries no work location and no task rows.
-        // Forced here rather than trusted from the request: this is the only path rows reach
-        // the database, so a direct API call cannot smuggle them in.
-        entry.setWorkLocation(isHoliday ? null : request.workLocation());
+        // A holiday has nothing to log, so it carries no work location and no task rows. A
+        // weekend carries no work location either — any tasks on it are optional overtime, not a
+        // normal shift with a location to record — but unlike a holiday it may still carry task
+        // rows (below). Forced here rather than trusted from the request: this is the only path
+        // rows reach the database, so a direct API call cannot smuggle them in.
+        entry.setWorkLocation((isHoliday || isWeekend) ? null : request.workLocation());
         entry.setNextDayPlan(request.nextDayPlan());
         entry.setRemarks(request.remarks());
         entry.setUpdatedAt(now);
@@ -445,14 +448,19 @@ public class EodService {
 
         // Work location is required whenever the day actually involves work. A full-day leave has
         // none by definition (saveDraft leaves it null and the UI disables the field), so it is
-        // only demanded when at least one row is real work. HOLIDAY never reaches here.
+        // only demanded when at least one row is real work. A WEEKEND task row is optional
+        // overtime, not a normal shift, so it never demands one either. HOLIDAY never reaches here.
         boolean hasWorkRow = entry.getTasks().stream().anyMatch(t -> !isLeaveRow(t));
-        if (hasWorkRow && (entry.getWorkLocation() == null || entry.getWorkLocation().isBlank())) {
+        if (hasWorkRow && entry.getDayType() != EodEntry.DayType.WEEKEND
+                && (entry.getWorkLocation() == null || entry.getWorkLocation().isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Work location is required.");
         }
 
-        if (entry.getNextDayPlan() == null || entry.getNextDayPlan().isBlank()) {
+        // Optional on a Weekend — an optional OT task logged there doesn't turn it into a normal
+        // working day, so there is still no "tomorrow" this day is obligated to plan for.
+        if (entry.getDayType() != EodEntry.DayType.WEEKEND
+                && (entry.getNextDayPlan() == null || entry.getNextDayPlan().isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Next-day plan is required.");
         }
@@ -504,9 +512,11 @@ public class EodService {
         // The minimum applies to WORKING_DAY (flat 2h floor) and to the two half-leave types
         // (half of Standard Working Hours — OT, if any, is computed on top of this in
         // applyOvertime and never lowers it). On a full LEAVE day the hours are optional — the
-        // absence is the record, so a leave row left at 0 is legitimate. The maximum still applies
-        // to every day type, since no amount of leave makes a day longer than 24 hours.
-        if (entry.getDayType() != EodEntry.DayType.LEAVE) {
+        // absence is the record, so a leave row left at 0 is legitimate. A WEEKEND has no baseline
+        // at all — any hours logged are pure overtime (applyOvertime), so there is nothing to
+        // floor against either. The maximum still applies to every day type, since no amount of
+        // leave (or weekend overtime) makes a day longer than 24 hours.
+        if (entry.getDayType() != EodEntry.DayType.LEAVE && entry.getDayType() != EodEntry.DayType.WEEKEND) {
             if (HALF_LEAVE_TYPES.contains(entry.getDayType())) {
                 BigDecimal minimum = halfDayHoursCap();
                 if (total.compareTo(minimum) < 0) {
@@ -647,10 +657,14 @@ public class EodService {
 
         // A half-day leave is only expected to cover half the standard day, so hours beyond
         // THAT half (not the full day) are what count as overtime — matching the "half + OT"
-        // framing of the minimum-hours rule in validateLoggedDay.
-        BigDecimal reference = HALF_LEAVE_TYPES.contains(entry.getDayType())
-                ? halfDayHoursCap()
-                : dailyHoursCap();
+        // framing of the minimum-hours rule in validateLoggedDay. A WEEKEND has no baseline
+        // hours at all — the reference is zero, so any task logged there is entirely overtime,
+        // never blended into a regular-hours bucket.
+        BigDecimal reference = entry.getDayType() == EodEntry.DayType.WEEKEND
+                ? BigDecimal.ZERO
+                : HALF_LEAVE_TYPES.contains(entry.getDayType())
+                        ? halfDayHoursCap()
+                        : dailyHoursCap();
 
         Integer minutes = entry.getTimeAdjustmentMinutes();
         if (entry.getTimeAdjustmentType() != null && minutes != null) {
@@ -720,6 +734,12 @@ public class EodService {
         boolean isHoliday = holidayRepository.existsByHolidayDate(target);
         if (isHoliday) {
             return new EodDayDefaultsDto(EodEntry.DayType.HOLIDAY.name(), null, hoursPerDay);
+        }
+        // A holiday takes priority over the weekend rule below when a date happens to be both
+        // (e.g. a Saturday holiday) — Holiday's "nothing to log" framing wins over Weekend's
+        // "optional overtime" one.
+        if (isWeekend(target)) {
+            return new EodDayDefaultsDto(EodEntry.DayType.WEEKEND.name(), null, hoursPerDay);
         }
         return new EodDayDefaultsDto(EodEntry.DayType.WORKING_DAY.name(), DEFAULT_WORK_LOCATION, hoursPerDay);
     }
